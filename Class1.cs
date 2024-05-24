@@ -5,7 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using ExcelDna.Integration;
-using Microsoft.Office.Interop.Excel;
+using Excel = Microsoft.Office.Interop.Excel; //using Microsoft.Office.Interop.Excel;
 using System.Windows.Forms;
 using System.Diagnostics;
 using System.Security.Cryptography;
@@ -73,14 +73,25 @@ namespace ClassLibrary2
         [ExcelCommand(MenuName = "Test", MenuText = "Range Set2", ShortCut = "^Q")]
         public static void RangeSet2(object values)
         {
-            dynamic xlApp = ExcelDnaUtil.Application;
-            
+            Excel.Application xlApp = (Excel.Application)ExcelDnaUtil.Application;
+            //xlApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            var sw = new System.Diagnostics.Stopwatch();
+            sw.Start();
+
             ExcelReference inRange;
             inRange = (ExcelReference)XlCall.Excel(XlCall.xlfSelection);
             string refText = (string)XlCall.Excel(XlCall.xlfReftext, inRange, true); // returns excel address "[Book1]Sheet1!$E$5:$F$8"
             dynamic range1 = xlApp.Range[refText]; //range1[1].address
 
-            dynamic wb = xlApp.ActiveWorkbook;
+            //Range targetRange = xlApp.activeworkbook.Sheets[1].Range["A1:C2"];
+            //Range dateCell = targetRange.Cells[2, 2];
+
+
+            Excel.Workbook wb = xlApp.ActiveWorkbook;
+            object[,] dat = new object[3, 4];
+            //xlApp.Sheets[1].Range(xlApp.Sheets[1].Cells[1, 1], xlApp.Sheets[1].Cells[1000, 256]).value = dat;
+            object[,] formulaArr = xlApp.Sheets[1].range(xlApp.Sheets[1].cells(1, 1), xlApp.Sheets[1].cells(10, 5)).formula;
+
 
             //dynamic flg = XlCall.Excel(XlCall.xlcSelectSpecial,3,23,1); // does not work on protected sheet
             inRange = (ExcelReference)XlCall.Excel(XlCall.xlfSelection);
@@ -112,7 +123,7 @@ namespace ClassLibrary2
             object[,] sheetNames = (object[,])result;
 
             ExcelReference sheetRef = (ExcelReference)XlCall.Excel(XlCall.xlSheetId, sheetNames[0, 0]);
-            string str1 = xlApp.activeworkbook.worksheets(1).codename; // index starts from one
+            string str1 = xlApp.ActiveWorkbook.Worksheets[1].codename; // index starts from one
 
             dynamic r1c1_mode = XlCall.Excel(XlCall.xlfGetWorkspace, 4); //If in R1C1 mode, returns TRUE; if in A1 mode, returns FALSE.
             XlCall.Excel(XlCall.xlcOptionsGeneral, 2); //Use 1 for A1 style references; 2 for R1C1 style references
@@ -143,7 +154,7 @@ namespace ClassLibrary2
                             //Excel requires IsMacroType = true for you to call xlfGetFormula, but then has the side effect of becoming volatile.
                             //dynamic xx2 = (string)XlCall.Excel(XlCall.xlfGetFormula, inRange); // formula in R1C1-style references
                             dynamic xx3 = (string)XlCall.Excel(XlCall.xlfGetCell, 6, inRange); //Formula in reference, as text, in either A1 or R1C1 style depending on the workspace setting.
-                            strFormulas.Append(j.ToString("000") + i1.ToString("0000000") + i2.ToString("0000000") + xx3);
+                            strFormulas.Append(j.ToString("000") + i1.ToString("0000000") + i2.ToString("00000") + xx3);
                             distinctFormulae.Add(xx3.ToString());
                         }
                     }
@@ -169,7 +180,10 @@ namespace ClassLibrary2
             {
                 hashStr.Append(hashByte.ToString("x2"));
             }
-            MessageBox.Show("distinctFormulaCount:"+distinctFormulaCount.ToString()+ "\n" + hashStr.ToString());
+
+            sw.Stop(); TimeSpan ts = sw.Elapsed;
+            string lapse = ts.Hours.ToString("00")+":"+ts.Minutes.ToString("00")+":"+ts.Seconds.ToString("00");
+            MessageBox.Show("Time:" + lapse +"\n"+"distinctFormulaCount:" + distinctFormulaCount.ToString() + "\n" + hashStr.ToString());
 
         }
 
