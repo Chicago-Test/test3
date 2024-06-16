@@ -16,8 +16,8 @@ namespace VBAStreamDecompress
     {
         static void Main(string[] args)
         {
-            string filename = @"../../check-formula-protection_v1.88 - testing.xlsm";
-            if (args.Length > 0) { filename = args[1]; }
+            string filename = @"..\..\check-formula-protection_v1.88 - testing.xlsm";
+            if (args.Length > 0) { filename = args[0]; Console.WriteLine(args[0]); }
 
             try
             {
@@ -287,9 +287,10 @@ namespace VBAStreamDecompress
                                     }
                                 }
                                 string str = filename;
-                                int n = str.LastIndexOf("/");
+                                int n = str.LastIndexOf("\\");
                                 if (n >= 0) { str = str.Substring(n + 1); }
-                                System.IO.File.WriteAllBytes("(VBAcode)" + str + ".zip", ms.ToArray());
+                                string outFileFullPath= System.AppDomain.CurrentDomain.BaseDirectory + "(VBAcode)" + str + ".zip";
+                                System.IO.File.WriteAllBytes(outFileFullPath, ms.ToArray());
                             }
                             ////////////////////////////
                         }
