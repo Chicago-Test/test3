@@ -12,6 +12,9 @@ using System.Security.Cryptography;
 using System.Security.Policy;
 
 using System.Runtime.InteropServices;
+using System.Reflection;
+using Microsoft.Office.Interop.Excel;
+using System.IO;
 
 namespace ClassLibrary2
 {
@@ -73,62 +76,71 @@ namespace ClassLibrary2
         [ExcelCommand(MenuName = "Test", MenuText = "Range Set2", ShortCut = "^Q")]
         public static void RangeSet2(object values)
         {
-            Excel.Application xlApp = (Excel.Application)ExcelDnaUtil.Application;
+            dynamic xlApp = ExcelDnaUtil.Application;
+
+            // If you do
+            // Excel.Application xlApp2 = (Excel.Application)ExcelDnaUtil.Application;
+            // YOU WILL LOSE HOT RELOAD!!!
+            //https://stackoverflow.com/questions/75570571/hot-reload-is-not-available-due-to-cs7096
+            //Hot relead only works for fully managed code. It patches the IL in the runtime. It can't do that with COM objects
+
             //xlApp.Calculation = Excel.XlCalculation.xlCalculationManual;
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
 
-            ExcelReference inRange;
-            inRange = (ExcelReference)XlCall.Excel(XlCall.xlfSelection);
-            string refText = (string)XlCall.Excel(XlCall.xlfReftext, inRange, true); // returns excel address "[Book1]Sheet1!$E$5:$F$8"
-            dynamic range1 = xlApp.Range[refText]; //range1[1].address
 
-            //Range targetRange = xlApp.activeworkbook.Sheets[1].Range["A1:C2"];
-            //Range dateCell = targetRange.Cells[2, 2];
+            // Get workbook full path
+            object x = XlCall.Excel(XlCall.xlfGetWorkbook, 1);
+            object[,] sSheetnames = (object[,])XlCall.Excel(XlCall.xlfGetWorkbook, 1);
+            string ssss = sSheetnames[0, 0].ToString();
+            string sh_name_only = ssss.Substring(1 + ssss.IndexOf("]"));
+            var sPath = XlCall.Excel(XlCall.xlfGetDocument, 2, sh_name_only); // returns Error when workbook is not saved yet
+            if (sPath.ToString().IndexOf(":") < 0) { return; /* ERROR */ }
+            var sWKBKname = XlCall.Excel(XlCall.xlfGetDocument, 88, sh_name_only);
+            string wkbkFullPath = sPath + "\\" + sWKBKname;
 
-
-            Excel.Workbook wb = xlApp.ActiveWorkbook;
-            object[,] dat = new object[3, 4];
-            //xlApp.Sheets[1].Range(xlApp.Sheets[1].Cells[1, 1], xlApp.Sheets[1].Cells[1000, 256]).value = dat;
-            object[,] formulaArr = xlApp.Sheets[1].range(xlApp.Sheets[1].cells(1, 1), xlApp.Sheets[1].cells(10, 5)).formula;
-
-
-            //dynamic flg = XlCall.Excel(XlCall.xlcSelectSpecial,3,23,1); // does not work on protected sheet
-            inRange = (ExcelReference)XlCall.Excel(XlCall.xlfSelection);
-
+            byte[] fileBytes;
             try
             {
-                inRange = new ExcelReference(2, 2, 1, 1, "Sheet1");
-                dynamic xx = XlCall.Excel(XlCall.xlfGetCell, 48, inRange); // Isformula:true/false
-                dynamic xx1 = XlCall.Excel(XlCall.xlfGetFormula, inRange); // formula in R1C1-style references
-                xlApp.Range["F1"].Value = "Testing 1... 2... 3... 4";
+                //Can read a file used by another process
+                using (var fs = new FileStream(wkbkFullPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    fileBytes = new byte[fs.Length];
+                    fs.Read(fileBytes, 0, fileBytes.Length);
+                    fs.Close();
+                }
+                // Need reference to VBAStreamDecompress.dll, and need to copy 7z.dll to "x86" or "x64"
+                var hash = VBAStreamDecompress.MVGvbaDecompress.archiveVBAcodes2(new MemoryStream(fileBytes), "");
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                //        throw;
+                throw;
             }
 
+            return;
 
-            //Application xlapp1=new Application();
-            //string str=xlapp1.ActiveSheet.Name;
-
-            //ExcelReference theRef = (ExcelReference)values;
-
-            //MessageBox.Show("ワークシートを新規作成します2");
-            //XlCall.Excel(XlCall.xlcWorkbookInsert);
-            //XlCall.Excel(XlCall.xlcWorkbookActivate, "Sheet2");
-            //https://thinkami.hatenablog.com/entry/20131127/1385503166
-            var cell = new ExcelReference(0, 0).GetValue();
+            ExcelReference inRange;
             object result = XlCall.Excel(XlCall.xlfGetWorkbook, 1);
             object[,] sheetNames = (object[,])result;
 
-            ExcelReference sheetRef = (ExcelReference)XlCall.Excel(XlCall.xlSheetId, sheetNames[0, 0]);
-            string str1 = xlApp.ActiveWorkbook.Worksheets[1].codename; // index starts from one
+            /////////////////////////////////////////////////////
+            ///
+            int iii = 67;
+            string rangeText2 = xlApp.Worksheets[1].usedrange.address;
+            //xlApp.Worksheets[1].cells(1,1)
+            //xlApp.Worksheets[1].cells(1,1).locked
+            //If there is only one filled cell, return is string otherwise object[,]
+            //object[,] formulaArray1 = (object[,])xlApp.Worksheets[1].usedrange.Formula;
+            dynamic formulaArray1 = xlApp.Worksheets[1].usedrange.Formula;
+            //if(formulaArray1 is System.Object[,])
+            if (formulaArray1 is System.String) { } else { }
 
-            dynamic r1c1_mode = XlCall.Excel(XlCall.xlfGetWorkspace, 4); //If in R1C1 mode, returns TRUE; if in A1 mode, returns FALSE.
-            XlCall.Excel(XlCall.xlcOptionsGeneral, 2); //Use 1 for A1 style references; 2 for R1C1 style references
-            dynamic xxx4 = XlCall.Excel(XlCall.xlfFormulaConvert, "=SUM(D3:D5)+1+Sheet2!C4", true, false, 1);
 
+            ExcelReference sheetRef = (ExcelReference)XlCall.Excel(XlCall.xlSheetId, "xxxxxxx");
+
+            // Inside testFind, hot reload does not work!!!
+            testFind(xlApp, (string)sheetNames[0, 0], 1, 1);
+            /////////////////////////////////////////////////////
 
             int distinctFormulaCount = 0;
             var strFormulas = new StringBuilder();
@@ -139,6 +151,9 @@ namespace ClassLibrary2
                 string rangeText = xlApp.Worksheets[j + 1].usedrange.address; //COM
                 double lastRow = (double)XlCall.Excel(XlCall.xlfGetDocument, 10, sheetName); // C API (usedRange) Number of the last used row. If the sheet is empty, returns 0.
                 double lastCol = (double)XlCall.Excel(XlCall.xlfGetDocument, 12, sheetName);
+
+                //testFind(xlApp, sheetName, (int)lastRow, (int)lastCol);
+
 
                 var distinctFormulae = new HashSet<string>();
 
@@ -182,10 +197,16 @@ namespace ClassLibrary2
             }
 
             sw.Stop(); TimeSpan ts = sw.Elapsed;
-            string lapse = ts.Hours.ToString("00")+":"+ts.Minutes.ToString("00")+":"+ts.Seconds.ToString("00");
-            MessageBox.Show("Time:" + lapse +"\n"+"distinctFormulaCount:" + distinctFormulaCount.ToString() + "\n" + hashStr.ToString());
+            string lapse = ts.Hours.ToString("00") + ":" + ts.Minutes.ToString("00") + ":" + ts.Seconds.ToString("00");
+            MessageBox.Show("Time:" + lapse + "\n" + "distinctFormulaCount:" + distinctFormulaCount.ToString() + "\n" + hashStr.ToString());
 
         }
-
+        private static void testFind(dynamic xlApp, string sheetName, int lastRow, int lastCol)
+        {
+            //If parameter is declared as "Excel.Application xlApp" then hot reload will fail!
+            int ii = 9;
+            //ExcelReference inRange = new ExcelReference(0, lastRow - 1, 0, lastCol - 1, sheetName);
+            //var str1 = (string)XlCall.Excel(XlCall.xlfReftext, inRange);
+        }
     }
 }
