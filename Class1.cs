@@ -15,11 +15,73 @@ using System.Runtime.InteropServices;
 using System.Reflection;
 using Microsoft.Office.Interop.Excel;
 using System.IO;
+using static System.Net.WebRequestMethods;
+using System.Xml;
+using System.Net;
 
 namespace ClassLibrary2
 {
     public static class MyFunctions
     {
+        [ExcelFunction(Description = "PassCellLockInformation")]
+        public static object yoji([ExcelArgument(AllowReference = false)] object locked, object wksheetIndex, object seed) // Don't use "AllowReference = true" for object arguments??
+        {
+            // Call from VBA. Application.Run
+
+            //You certainly won't be able to return a Range (or any other COM object) from an Excel-DNA user - defined function.
+            //int[,] ret= new int[2,5];
+            //int[] ret2 = new int[4];
+            // Array returns only work with Excel which supports dynamic arrays (spill). Only works on Office365
+            //return arg.GetType().ToString();
+
+            dynamic xlApp = ExcelDnaUtil.Application;
+            dynamic formulaArray1 = xlApp.Worksheets[wksheetIndex].usedrange.FormulaR1C1; //index starts from 1
+
+            int lastRow;
+            int lastCol;
+
+            int lastRow_Formula;
+            int lastCol_Formula;
+            if (formulaArray1 is object[,])
+            {
+                var a = (object[,])formulaArray1;
+                lastRow_Formula = a.GetLength(0);
+                lastCol_Formula = a.GetLength(1);
+            }
+            else { return ""; }
+
+            var ifLockedZero = (object[,])locked; //starts with zero
+
+            // Need to check the size is same between locked and formula
+            lastRow = Math.Min(lastRow_Formula, ifLockedZero.GetLength(0));
+            lastCol = Math.Min(lastCol_Formula, ifLockedZero.GetLength(1));
+
+            int distinctFormulaCount = 0;
+            var strFormulas = new StringBuilder();
+            {
+                var distinctFormulae = new HashSet<string>();
+
+                for (int i1 = 0; i1 < lastRow_Formula; i1++)
+                {
+                    for (int i2 = 0; i2 < lastCol_Formula; i2++)
+                    {
+                        string str = formulaArray1[i1 + 1, i2 + 1];
+                        if (str.StartsWith("=") && (int)((double)ifLockedZero[i1, i2]) == 0)
+                        {
+                            //Formula in reference, as text, in either A1 or R1C1 style depending on the workspace setting.
+                            strFormulas.Append(((int)(double)wksheetIndex).ToString("000") + i1.ToString("0000000") + i2.ToString("00000") + str);
+                            distinctFormulae.Add(str.ToString());
+                        }
+                    }
+                }
+                distinctFormulaCount += distinctFormulae.Count();
+            }
+
+            string hashStr = calcHash(strFormulas.ToString() + seed);
+
+            return hashStr.Substring(0,6) + "," + distinctFormulaCount;
+        }
+
         [ExcelFunction(Description = "My first .NET function")]
         public static string SayHello(string name)
         {
@@ -59,7 +121,7 @@ namespace ClassLibrary2
         {
             dynamic xlApp = ExcelDnaUtil.Application;
 
-            xlApp.Range["F1"].Value = "Testing 1... 2... 3... 4";
+            xlApp.Range["F1"].Value = "Testing 1... 2... 3... 4";  //xlApp.Range["A1"].Height   xlApp.Cells(1,1).Value xlApp.Cells(1,1).Locked
 
             int i = 1;
             object result = XlCall.Excel(XlCall.xlfGetWorkbook, i);
@@ -86,7 +148,13 @@ namespace ClassLibrary2
 
             //Need to remove (error) reference to VBAStreamDecompress.dll, if dll doesn't exist. This prevented using HOT RELOAD.
 
-            //xlApp.Calculation = Excel.XlCalculation.xlCalculationManual;
+            //xlCalculationAutomatic -4105 xlCalculationManual - 4135 xlCalculationSemiautomatic 2
+
+            //xlApp.Calculation = Microsoft.Office.Interop.Excel.XlCalculation.xlCalculationManual; This will prevent using HOT RELOAD
+            xlApp.Calculation = -4135;
+            xlApp.EnableEvents = false;
+            xlApp.ScreenUpdating = false;
+
             var sw = new System.Diagnostics.Stopwatch();
             sw.Start();
 
@@ -136,7 +204,7 @@ namespace ClassLibrary2
 
             /////////////////////////////////////////////////////
             ///
-            int iii = 67;
+            int iii = 69;
             string rangeText2 = xlApp.Worksheets[1].usedrange.address;
             //xlApp.Worksheets[1].cells(1,1)
             //xlApp.Worksheets[1].cells(1,1).locked
@@ -148,7 +216,7 @@ namespace ClassLibrary2
 
 
             //ExcelReference sheetRef = (ExcelReference)XlCall.Excel(XlCall.xlSheetId, "xxxxxxx");
-            testFind(xlApp, (string)sheetNames[0, 0], 1, 1);
+            //testFind(xlApp, (string)sheetNames[0, 0], 1, 1); // This prevents hot reload
             /////////////////////////////////////////////////////
 
             int distinctFormulaCount = 0;
@@ -160,9 +228,6 @@ namespace ClassLibrary2
                 string rangeText = xlApp.Worksheets[j + 1].usedrange.address; //COM?
                 double lastRow = (double)XlCall.Excel(XlCall.xlfGetDocument, 10, sheetName); // C API (usedRange) Number of the last used row. If the sheet is empty, returns 0.
                 double lastCol = (double)XlCall.Excel(XlCall.xlfGetDocument, 12, sheetName);
-
-                //testFind(xlApp, sheetName, (int)lastRow, (int)lastCol);
-
 
                 var distinctFormulae = new HashSet<string>();
 
@@ -196,6 +261,11 @@ namespace ClassLibrary2
             string lapse = ts.Hours.ToString("00") + ":" + ts.Minutes.ToString("00") + ":" + ts.Seconds.ToString("00");
             MessageBox.Show("Time:" + lapse + "\n" + "distinctFormulaCount:" + distinctFormulaCount.ToString() + "\n" + hashStr);
 
+
+            xlApp.ScreenUpdating = true;
+            xlApp.EnableEvents = true;
+            xlApp.Calculation = -4105;
+
         }
 
         private static string calcHash(string targetStr)
@@ -218,12 +288,65 @@ namespace ClassLibrary2
             return hashStr.ToString();
         }
 
+        //Useless function. Too Slow.
         private static void testFind(dynamic xlApp, string sheetName, int lastRow, int lastCol)
         {
             //If parameter is declared as "Excel.Application xlApp" then hot reload will fail!
             int ii = 9;
             ExcelReference inRange = new ExcelReference(0, lastRow - 1, 0, lastCol - 1, sheetName);
             //var str1 = (string)XlCall.Excel(XlCall.xlfReftext, inRange);
+
+            //https://stackoverflow.com/questions/17387443/fast-method-for-determining-unlocked-cell-range
+
+            //ExcelReference FoundCell; // inRange = new ExcelReference(i1, i1, i2, i2, sheetName);
+
+            string FirstCellAddr;
+            //ExcelReference UnlockedUnion=null;
+            Excel.Range UnlockedUnion = null;
+
+            //'NOTE: When finding by format, you must first set the FindFormat specification:
+
+            xlApp.FindFormat.Clear();
+            xlApp.FindFormat.Locked = true;
+
+            //'NOTE: Unfortunately, the FindNext method does not remember the SearchFormat:=True specification so it is
+            //'necessary to capture the address of the first cell found, use the Find method (instead) inside the find-next
+            //'loop and explicitly terminate the loop when the first-found cell is found a second time.
+
+            //error FoundCell = xlApp.Worksheets[1].usedRange.Find("1", Type.Missing, Excel.XlFindLookIn.xlValues, Excel.XlLookAt.xlPart, Excel.XlSearchOrder.xlByRows, Excel.XlSearchDirection.xlNext, false, Type.Missing, true);
+            Excel.Range FoundCell = (Excel.Range)xlApp.Worksheets[1].usedRange.Find("1", Type.Missing, Excel.XlFindLookIn.xlValues, Excel.XlLookAt.xlPart, Excel.XlSearchOrder.xlByRows, Excel.XlSearchDirection.xlNext, false, Type.Missing, true);
+            Excel.Range FirstCell = null;
+            //FoundCell = xlApp.Worksheets[1].usedrange.Find(What:= "", After:=.Cells(1, 1), LookIn:= xlFormulas, LookAt:= xlPart,
+            //                      SearchOrder:= xlByRows, SearchDirection:= xlNext, MatchCase:= False,
+            //                      SearchFormat:= True);
+
+
+
+            if (FoundCell != null)
+            {
+                var first_address = FoundCell.Address[true, true, Excel.XlReferenceStyle.xlA1, true, null];
+                //FirstCell = FoundCell;
+                do
+                {
+                    //var xxx = FoundCell.GetType().GetProperties();
+                    //Debug.Print FoundCell.Address
+                    if (UnlockedUnion == null)
+                    {
+                        UnlockedUnion = FoundCell.MergeArea;//                         'Include merged cells, if any
+                    }
+                    else
+                    {
+                        UnlockedUnion = xlApp.Union(UnlockedUnion, FoundCell.MergeArea);
+                    }
+                    FoundCell = (Excel.Range)xlApp.Worksheets[1].usedRange.Find("1", FoundCell, Excel.XlFindLookIn.xlValues, Excel.XlLookAt.xlPart, Excel.XlSearchOrder.xlByRows, Excel.XlSearchDirection.xlNext, false, Type.Missing, true);
+                } while (first_address != FoundCell.Address[true, true, Excel.XlReferenceStyle.xlA1, true, null]);
+
+            }
+            xlApp.FindFormat.Clear();
+
+            //Set GetUnlockedCells = UnlockedUnion
+
+
         }
     }
 }
