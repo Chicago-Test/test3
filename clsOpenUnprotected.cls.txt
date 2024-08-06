@@ -1,0 +1,521 @@
+VERSION 1.0 CLASS
+BEGIN
+  MultiUse = -1  'True
+END
+Attribute VB_Name = "clsOpenUnprotected"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+'https://www.ka-net.org/blog/?p=7605
+'https://www.rondebruin.nl/win/s7/win002.htm
+Option Explicit
+Public Sub OpenUnprotected()
+    On Error GoTo ErrHandler:
+    Dim fnameFullPath As String
+    Dim ws As Excel.Worksheet
+    Dim ret As Integer
+    Dim str As String
+    Dim cursorSheet As String
+    Dim cursorCellAddr As String
+
+    Dim previousSecurity As Integer
+    previousSecurity = Application.AutomationSecurity 'ver 1.80
+    
+    If ActiveWorkbook Is Nothing Then
+    Else
+        fnameFullPath = ActiveWorkbook.FullName
+    End If
+
+    If fnameFullPath = "" Or 0 = InStr(fnameFullPath, "\") Then 'New workbook does not have path information.
+        ret = MsgBox("Choose workbook to unprotect. Continue?", vbYesNo)
+        If ret = vbNo Then
+            Exit Sub
+        Else
+            ret = vbNo
+        End If
+    Else
+        ret = MsgBox("Unprotect active workbook? Click No to choose another workbook.", vbYesNoCancel)
+        If ret = vbCancel Then Exit Sub
+    End If
+    
+    If ret = vbYes Then
+        cursorSheet = ActiveSheet.Name
+        cursorCellAddr = ActiveCell.address
+    Else
+        On Error Resume Next
+        str = fnameFullPath
+        If str <> "" And InStr(str, "\") > 0 Then
+            ChDrive Left(str, 1): ChDir Left(str, InStrRev(str, "\"))
+        End If
+        On Error GoTo ErrHandler
+        'set current file path
+        fnameFullPath = Application.GetOpenFilename(filefilter:="Excel Files (*.xlsx;*.xlsm;*.xlsb;*.xls), *.xlsx;*.xlsm;*.xlsb;*.xls", _
+                                                    MultiSelect:=False)
+        If fnameFullPath = "False" Then Exit Sub
+
+        str = "Open unprotected version of: " & vbCrLf & vbCrLf & Mid(fnameFullPath, InStrRev(fnameFullPath, "\") + 1) & _
+              vbCrLf & vbCrLf & "Continue?"
+        ret = MsgBox(str, vbYesNo)
+        If ret = vbNo Then
+            Exit Sub
+        End If
+    End If
+
+    Dim t1 As Double, t2 As Double, strTime As String
+    t1 = Timer
+
+    Dim outputfileFullPath As String
+'    Dim cls As clsOpenUnprotected
+'    Set cls = New clsOpenUnprotected
+'    ret = cls.main1(fnameFullPath, outputfileFullPath)
+    ret = main1(fnameFullPath, outputfileFullPath)
+
+    Dim xlwb As Excel.Workbook
+
+    If ret = 0 Then
+        ret = MsgBox("Open with macro enabled?", vbYesNo) 'ver 1.80
+        If ret = vbNo Then Application.AutomationSecurity = msoAutomationSecurityForceDisable 'ver 1.80
+        If ret = vbNo Then Application.EnableEvents = False 'ver 1.86
+        Set xlwb = Workbooks.Open(Filename:=outputfileFullPath)
+        xlwb.Activate
+        On Error Resume Next
+        xlwb.Worksheets(cursorSheet).Visible = True
+        xlwb.Worksheets(cursorSheet).Activate
+        xlwb.Worksheets(cursorSheet).Range(cursorCellAddr).Select
+        On Error GoTo ErrHandler
+        t2 = Timer - t1
+        strTime = Format(Int(t2 / 3600), "00") & ":" & Format(Int((t2 Mod 3600) / 60), "00") & ":" & Format(Int(t2 Mod 60), "00")
+
+        'MsgBox "Complete! [" & strTime & "]." & vbCrLf & vbCrLf & "Generated:" & vbCrLf & Mid(outputfileFullPath, InStrRev(outputfileFullPath, "\") + 1)
+        'MsgBox "Complete! [" & strTime & "]." & vbCrLf & vbCrLf & "Generated:" & vbCrLf & outputfileFullPath
+        MsgBox "Complete! [" & strTime & "]." & vbCrLf & vbCrLf & "Generated:" & vbCrLf & outputfileFullPath & vbCrLf & vbCrLf & "VBA password (if originally protected) set to: a"
+        
+        
+    Else
+        MsgBox "Error. ", vbCritical 'Maybe no need for this message. Error dialogbox is already issued beforehand.
+    End If
+    Application.AutomationSecurity = previousSecurity
+    Application.EnableEvents = True
+
+    Exit Sub
+ErrHandler:
+    Application.AutomationSecurity = previousSecurity
+    Application.EnableEvents = True
+    MsgBox "Error. " & Err.Description, vbCritical
+End Sub
+
+
+Public Function main1(fnameFullPath As String, ByRef ret_outputFileFullpath) As Integer
+    'Error:-1    Success:0
+    'Return value: output full path file name
+    On Error GoTo ErrHandler
+    '    fname = Application.GetOpenFilename(filefilter:="Excel Files (*.xlsx), *.xlsx", _
+    '                                        MultiSelect:=False)
+    Randomize                                    'Excel will use the system timer as the seed value for the RND function
+
+    Dim i As Long, str As String
+    Dim strDate As String
+    Dim c As Variant
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    Dim inputFile As New clsFileName
+    inputFile.Init (fnameFullPath)
+
+    Dim tempFolder As String
+    tempFolder = fso.GetSpecialFolder(2)         'C:\Users\\AppData\Local\Temp
+
+
+    Dim outputFile As New clsFileName
+    Dim temporaryDuplicateFile As New clsFileName
+    Dim temporaryXLSM As New clsFileName
+    Dim temporaryZIP As New clsFileName
+
+    Dim IsXLSorXLSB As Boolean
+    IsXLSorXLSB = False
+
+    If LCase(inputFile.FileExtension) = "xls" Or LCase(inputFile.FileExtension) = "xlsb" Then
+        'outputFile.Init (inputFile.PathName & "\" & "(unprotected)" & inputFile.FnameWithoutExtension & ".xlsm")
+        outputFile.Init (tempFolder & "\" & "(unprotected)" & inputFile.FnameWithoutExtension & ".xlsm")
+        IsXLSorXLSB = True
+    Else
+        'outputFile.Init (inputFile.PathName & "\" & "(unprotected)" & inputFile.FName)
+        outputFile.Init (tempFolder & "\" & "(unprotected)" & inputFile.FName)
+    End If
+
+
+    str = "$tmp$_" & genRandomString(10) & "." & inputFile.FileExtension
+    'temporaryDuplicateFile.Init (inputFile.PathName & "\" & str)    'to do: check full path length
+    temporaryDuplicateFile.Init (tempFolder & "\" & str) 'to do: check full path length
+
+    str = "$tmp$_" & genRandomString(10) & ".zip"
+    'temporaryZIP.Init (inputFile.PathName & "\" & str)    'to do: check full path length
+    temporaryZIP.Init (tempFolder & "\" & str)   'to do: check full path length
+
+    str = "$tmp$_" & genRandomString(10) & ".xlsm"
+    'temporaryXLSM.Init (inputFile.PathName & "\" & str)    'to do: check full path length
+    temporaryXLSM.Init (tempFolder & "\" & str)  'to do: check full path length
+
+    'Set the folder name
+    Dim temporaryFolder As String, temporaryFolderFullPath As String
+    strDate = Format(Now, "yyyy-mm-dd-mm_h-mm-ss")
+    temporaryFolder = "$tmp$_" & strDate
+    'temporaryFolderFullPath = inputFile.PathName & "\" & temporaryFolder
+    temporaryFolderFullPath = tempFolder & "\" & temporaryFolder
+
+    '    str = "Remove protection of the selected Excel file and open it as: " & vbCrLf & outputFile.FName & _
+    '          vbCrLf & vbCrLf & "Write permission is required to the folder where the specified file is located." & _
+    '          vbCrLf & vbCrLf & "Continue?"
+    '    str = "Remove protection of the selected Excel file and open it as: " & vbCrLf & outputFile.FName & _
+    '          vbCrLf & vbCrLf & "Continue?"
+    
+    '    str = "Opening unprotected file as: " & vbCrLf & vbCrLf & outputFile.FName & _
+    '          vbCrLf & vbCrLf & "Continue?"
+    '    i = MsgBox(str, vbYesNo)
+    '    If i = vbNo Then
+    '        main1 = -1: Exit Function
+    '    End If
+
+    'Duplicate file
+    If (fso.FileExists(temporaryZIP.fullpathName) = False) _
+       And (fso.FileExists(temporaryDuplicateFile.fullpathName) = False) _
+       And (fso.FolderExists(temporaryFolderFullPath) = False) Then
+        Call copyOpenedFile(inputFile.fullpathName, temporaryDuplicateFile.fullpathName) 'overwrite
+    Else
+        MsgBox "Name conflicts of file/folder detected. Try again."
+        main1 = -1
+        Exit Function
+    End If
+
+    '+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    'If file extension *.xls or *.xlsb
+    If IsXLSorXLSB = True Then
+        Application.DisplayAlerts = False        'Should alerts be displayed???
+        Dim xlwb As Excel.Workbook
+        Set xlwb = Workbooks.Open(Filename:=temporaryDuplicateFile.fullpathName, ReadOnly:=True, UpdateLinks:=False)
+        ThisWorkbook.Activate
+        xlwb.SaveAs temporaryXLSM.fullpathName, FileFormat:=52 'save as XLSM
+        xlwb.Close
+        Application.DisplayAlerts = True
+        Name temporaryXLSM.fullpathName As temporaryZIP.fullpathName
+    Else
+        Name temporaryDuplicateFile.fullpathName As temporaryZIP.fullpathName
+    End If
+    '+++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    Call temporaryDuplicateFile.DeleteFile
+
+    'unzip *.xlsm.zip
+    Call Unzip2(temporaryZIP.fullpathName, temporaryFolder)
+    Call temporaryZIP.DeleteFile
+
+    'List xml files for protection removal
+    Dim xmlFiles As Collection
+    Set xmlFiles = New Collection
+    Call findProtectedXMLfile(temporaryFolderFullPath, xmlFiles)
+
+    'remove protection tag from xml files
+    For Each c In xmlFiles
+        removeSheetProtectionTagFromXML (c)
+    Next c
+
+    'Replace VBAProject.bin
+    Dim in_fileFullPath As String
+    Dim out_fileFullPath As String
+    in_fileFullPath = temporaryFolderFullPath & "\xl\vbaProject.bin"
+    out_fileFullPath = temporaryFolderFullPath & "\xl\vbaProject2.bin"
+    If (fso.FileExists(in_fileFullPath) = True) Then
+        i = change_VBA_password_of_VBAProject(in_fileFullPath, out_fileFullPath)
+        If i = 0 Then
+            fso.DeleteFile in_fileFullPath
+            fso.GetFile(out_fileFullPath).Name = "vbaProject.bin"
+        End If
+    End If
+
+    'zip and create Excel file
+    i = ZipFolder(temporaryFolderFullPath, outputFile.FName) 'output file overwritten
+    If i = -1 Then GoTo ErrHandler
+
+    'Delete tmp folder
+    If fso.FolderExists(temporaryFolderFullPath) = False Then
+        'MsgBox MyPath & " doesn't exist"
+        'Exit Sub
+    Else
+        fso.deletefolder temporaryFolderFullPath
+    End If
+
+    'MsgBox "Complete!"
+
+    'Open unprotected Excel file
+    ret_outputFileFullpath = outputFile.fullpathName
+
+    main1 = 0
+    Exit Function
+ErrHandler:
+    main1 = -1
+End Function
+Private Function genRandomString(length As Integer) As String
+
+    Dim i As Integer, n As Integer
+    Dim str As String, chars As String
+
+    chars = "0123456789abcdefghijklmnopqrstuvwxyz$"
+
+    For i = 0 To length
+        n = Rnd * Len(chars) + 1
+        str = str + Mid(chars, n, 1)
+    Next i
+    genRandomString = str
+
+End Function
+
+
+Private Sub findProtectedXMLfile(folderName As String, ByRef xmlFiles As Collection)
+'Dim xmlFiles() As String
+    Call findProtectedXMLfile2(folderName, folderName, xmlFiles)
+
+End Sub
+Private Sub findProtectedXMLfile2(folderName_ As String, baseFolderName_ As String, xmlFiles As Collection)
+    Dim str As Variant    'MUST BE VARIANT
+    Dim i As Integer
+
+    Dim fso As Object
+    Dim oApp As Object
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set oApp = CreateObject("Shell.Application")
+
+    Dim folderName As Variant, baseFolderName As Variant
+    folderName = folderName_    'convert to variant
+    baseFolderName = baseFolderName_
+
+
+    Dim f As Variant
+    For Each f In oApp.Namespace(folderName).Items    'Namespace() parameter must be variant
+        str = folderName & "\" & f.Name
+
+        If f.IsFolder = True Then
+            'Debug.Print "sub folder: " & folderName & "\" & f.Name
+            Call findProtectedXMLfile2(CStr(str), CStr(baseFolderName), xmlFiles)
+        Else
+
+            If (InStr(1, LCase(str), LCase(baseFolderName & "\xl\workbook.xml")) > 0) _
+               Or (str Like baseFolderName & "\xl\worksheets" & "\sheet*.xml") Then
+                'Debug.Print str
+                xmlFiles.Add str
+            End If
+
+        End If
+    Next
+
+End Sub
+
+Private Sub removeSheetProtectionTagFromXML(xmlFile As String)
+    Dim xmlDoc As Object
+    Dim elements As Object
+    Dim objNode As Object
+    Set xmlDoc = CreateObject("MSXML2.DOMDocument")
+
+    xmlDoc.Load xmlFile
+
+    If 0 = StrComp(LCase(Mid(xmlFile, InStrRev(xmlFile, "\") + 1)), LCase("workbook.xml")) Then
+        Set elements = xmlDoc.getElementsByTagName("workbookProtection")
+        Set objNode = xmlDoc.SelectSingleNode("//workbookProtection")
+    Else
+        Set elements = xmlDoc.getElementsByTagName("sheetProtection")
+        Set objNode = xmlDoc.SelectSingleNode("//sheetProtection")
+    End If
+
+    If Not objNode Is Nothing Then
+        objNode.ParentNode.RemoveChild objNode
+        'save xml
+        xmlDoc.Save xmlFile
+    End If
+End Sub
+
+Private Sub copyOpenedFile(fnameFullPath As String, outputFnameFullPath As String)
+'This works even source file is open. Target file will be overwritten.
+    On Error GoTo ErrHandler
+    Dim xlobj As Object
+    Set xlobj = CreateObject("Scripting.FileSystemObject")
+
+    Call xlobj.CopyFile(fnameFullPath, outputFnameFullPath, True)    'True: overwrite
+    Set xlobj = Nothing
+ErrHandler:
+End Sub
+Public Function ZipFolder(folderName As String, outputFilename As String) As Integer
+' Remove "\" at the end if exists.
+'If Mid(folderName, Len(folderName), 1) = "\" Then folderName = Mid(folderName, 1, Len(folderName) - 1)
+    If Right(folderName, 1) = "\" Then folderName = Mid(folderName, 1, Len(folderName) - 1)
+
+    Dim str As String
+    str = Mid(folderName, 1, InStrRev(folderName, "\") - 1)  ' parent folder
+    Dim ret As Integer
+    ret = ZipFileOrFolder(folderName, outputFilename, str)
+    ZipFolder = ret
+End Function
+
+
+Sub Unzip2(fnameFullPath As String, temporaryFolder As String)
+    On Error GoTo ErrHandler
+    Dim fso As Object
+    Dim oApp As Object
+    Dim FName As Variant
+    Dim FileNameFolder As Variant
+    Dim DefPath As String
+    Dim strDate As String
+    Dim fileNameInZip As Variant
+
+    ''Fname = "C:\Columbia\Standard Poors\program\Canada_eta reciept.xlsx.zip"
+
+    FName = fnameFullPath    'must be variant
+
+    If FName = False Then
+        'Do nothing
+    Else
+        'Root folder for the new folder.
+        'You can also use DefPath = "C:\Users\Ron\test\"
+        'DefPath = Application.DefaultFilePath
+
+        DefPath = Mid(FName, 1, InStrRev(FName, "\"))
+
+        If Right(DefPath, 1) <> "\" Then
+            DefPath = DefPath & "\"
+        End If
+
+        'Create the folder name
+        FileNameFolder = DefPath & temporaryFolder & "\"
+
+        'Make the normal folder in DefPath
+        On Error Resume Next
+        MkDir FileNameFolder
+        On Error GoTo ErrHandler
+
+        'Extract the files into the newly created folder
+        Set oApp = CreateObject("Shell.Application")
+
+        'Change this "*.txt" to extract the files you want
+        '        For Each fileNameInZip In oApp.Namespace(Fname).Items
+        '            If LCase(fileNameInZip) Like LCase("*.xml") Then
+        '                oApp.Namespace(FileNameFolder).CopyHere _
+                         '                        oApp.Namespace(Fname).Items.Item(CStr(fileNameInZip))
+        '            End If
+        '        Next
+
+        'extract all
+        With CreateObject("Shell.Application")
+            .Namespace(FileNameFolder).copyhere .Namespace(FName).Items
+        End With
+
+        '        On Error Resume Next
+        '        Set fso = CreateObject("scripting.filesystemobject")
+        'FSO.deletefolder Environ("Temp") & "\Temporary Directory*", True
+    End If
+    Exit Sub
+ErrHandler:
+End Sub
+
+Public Function ZipFileOrFolder(ByVal SrcPath As Variant, _
+                                ByVal outputFilename As String, _
+                                Optional ByVal DestFolderPath As Variant = "") As Integer
+'zip file or folder
+'SrcPath: file or folder
+'DestFolderPath: default is same as source
+    On Error GoTo ErrHandler
+    ZipFileOrFolder = -1    '0:Success -1: Error
+
+    Dim DestFilePath As Variant
+    Dim fso As Object
+    Dim oApp As Object
+
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set oApp = CreateObject("Shell.Application")
+
+    With fso
+        If IsFolder(DestFolderPath) = False Then
+            If IsFolder(SrcPath) = True Then
+                DestFolderPath = SrcPath
+            ElseIf IsFile(SrcPath) = True Then
+                DestFolderPath = .GetFile(SrcPath).ParentFolder.Path
+            Else: Exit Function
+            End If
+        End If
+        DestFilePath = AddPathSeparator(DestFolderPath) & _
+                       .GetBaseName(SrcPath) & ".zip"
+        'Create empty zip file
+        'Force overwrite
+        With .CreateTextFile(DestFilePath, True)
+            .Write ChrW(&H50) & ChrW(&H4B) & ChrW(&H5) & ChrW(&H6) & String(18, ChrW(0))
+            .Close
+        End With
+    End With
+
+    'test
+    Dim i As Long
+    Dim str As Variant    'MUST BE VARIANT!!!
+    str = SrcPath
+    Dim f As Variant    '???
+    i = 0
+
+    Const T As Long = 500    '500ms
+    Dim t1 As Long
+    For Each f In oApp.Namespace(str).Items
+        If f.IsFolder = True Then
+            'Debug.Print "sub folder: " & f.Name
+        Else
+            'Debug.Print f.Name
+        End If
+        oApp.Namespace(DestFilePath).copyhere str & "\" & f.Name
+        i = i + 1
+        t1 = Timer
+        While oApp.Namespace(DestFilePath).Items.count < i    'Need to wait for the process to complete. Otherwise critical error.
+            DoEvents
+            Application.Wait [Now()] + T / 86400000    'wait t1 ms  'Now() + TimeValue("00:00:01") 'wait 1 sec
+            'if time too long, exit
+            If Timer - t1 > 180 Then    ' if 3 minuites pass
+                MsgBox ("Timeout error file compressing the file. Process terminated.")
+                GoTo ErrHandler
+            End If
+        Wend
+    Next
+
+    'FileCopy DestFilePath, DestFilePath & ".xlsm"
+
+    str = Mid(DestFilePath, 1, InStrRev(DestFilePath, "\") - 1)    'No '\' at end
+    str = str & "\" & outputFilename
+
+    'Delete output file if exists
+    On Error Resume Next
+    fso.DeleteFile str, force:=True 'Kill command cannot delete read only file.
+    On Error GoTo ErrHandler
+    
+    If (fso.FileExists(str) = True) Then
+        MsgBox "Cannot replace output file: " & str
+        ZipFileOrFolder = -1
+        Exit Function
+    End If
+
+    Name DestFilePath As str    'If output file already exists, error. It happens if the file is already open by an application.
+    ZipFileOrFolder = 0
+    Exit Function
+
+ErrHandler:
+    MsgBox Err.Description, vbCritical
+    ZipFileOrFolder = -1
+End Function
+
+Private Function IsFolder(ByVal SrcPath As String) As Boolean
+    IsFolder = CreateObject("Scripting.FileSystemObject").FolderExists(SrcPath)
+End Function
+
+Private Function IsFile(ByVal SrcPath As String) As Boolean
+    IsFile = CreateObject("Scripting.FileSystemObject").FileExists(SrcPath)
+End Function
+Private Function AddPathSeparator(ByVal SrcPath As String) As String
+    If Right(SrcPath, 1) <> ChrW(92) Then SrcPath = SrcPath & ChrW(92)
+    AddPathSeparator = SrcPath
+End Function
+
+
+
+
