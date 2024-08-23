@@ -9,7 +9,11 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Security.Cryptography;
 
-using SevenZipExtractor; //SevenZipExtractor.1.0.17
+using SevenZipExtractor; //SevenZipExtractor.1.0.17 //Source code in this repo is licensed under The MIT License
+
+//https://github.com/bontchev/pcodedmp/tree/master
+//https://github.com/decalage2/oletools/wiki/olevba
+//https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-ovba/575462ba-bf67-4190-9fac-c275523c75fc
 
 namespace VBAStreamDecompress
 {
@@ -47,11 +51,16 @@ namespace VBAStreamDecompress
             byte[] patternByte = { 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01 };
 
             int indx = 0;
-            indx = Boyer_Moore.indexOf(buf, patternByte);
-            //indx = PatternAt(buf, patternByte);
+            int i = 0;
 
+            // This will get first occurence of the pattern
+            //indx = Boyer_Moore.indexOf(buf, patternByte);
+
+            // Need to get the last occurence of the pattern
+            i = Boyer_Moore.indexOf(buf.Reverse().ToArray(), patternByte.Reverse().ToArray());
+            indx = buf.Length - (i+patternByte.Length);
+            
             var buf2 = buf.Skip(indx + 8).ToArray();
-
             byte[] ret = decompress_stream(buf2);
             return ret;
         }
@@ -236,6 +245,7 @@ namespace VBAStreamDecompress
         {
             // Archive VBA codes into zip and also returns hash of vba code
             byte[] vbaCodeHash = null;
+
             using (ArchiveFile archiveFile = new ArchiveFile(fileStream))
             {
                 foreach (Entry entry in archiveFile.Entries)
@@ -278,7 +288,8 @@ namespace VBAStreamDecompress
                                 if (s.StartsWith("Module=")) { moduleItems.Add(s.Substring(7, s.Length - 7)); }
                                 if (s.StartsWith("Class=")) { moduleItems.Add(s.Substring(6, s.Length - 6)); }
                                 if (s.StartsWith("BaseClass=")) { moduleItems.Add(s.Substring(10, s.Length - 10)); }
-                                if (s == "Name=\"VBAProject\"") { break; }
+                                //if (s == "Name=\"VBAProject\"") { break; } // VBA project name can be changed from the default "VBAProject"
+                                if (s.StartsWith("Name=")) { break; }
                             }
                             ////////////////////////////
                             using (var ms = new System.IO.MemoryStream())
@@ -338,12 +349,12 @@ namespace VBAStreamDecompress
                     if (x[i].IndexOf("VERSION ") == 0) continue;
 
                     // Skip BEGIN-END lines
-                    if (x[i].Trim().ToUpper().IndexOf("BEGIN")==0)
+                    if (x[i].Trim().ToUpper().IndexOf("BEGIN") == 0)
                     { //# class: "BEGIN","END"  frm:"Begin","End"
                         do
                         {
                             i++;
-                        } while (x[i].Trim().ToUpper().IndexOf("END")==0);
+                        } while (x[i].Trim().ToUpper().IndexOf("END") == 0);
                         continue;
                     }
 
