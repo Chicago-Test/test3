@@ -1,5 +1,5 @@
 Private Sub CommandButton1_Click()
- Call ExcelRangeToWord
+    Call ExcelRangeToWord
 End Sub
 
 Sub ExcelRangeToWord()
@@ -11,7 +11,7 @@ Sub ExcelRangeToWord()
     (VBE > Tools > References > Microsoft Word 12.0 Object Library)
     'SOURCE: www.TheSpreadsheetGuru.com
  
-    Dim tbl As Excel.Range
+    Dim tbl As Excel.range
     Dim WordApp As Word.Application
     Dim myDoc As Word.Document
     Dim WordTable As Word.Table
@@ -46,66 +46,84 @@ Sub ExcelRangeToWord()
     
     'Create a New Document
     Set myDoc = WordApp.Documents.Add
- 
-  
+   
     With myDoc.PageSetup
-        .TopMargin = WordApp.InchesToPoints(0.6)
-        .BottomMargin = WordApp.InchesToPoints(0.6)
-        .LeftMargin = WordApp.InchesToPoints(0.6)
-        .RightMargin = WordApp.InchesToPoints(0.6)
+        .TopMargin = WordApp.InchesToPoints(1)
+        .BottomMargin = WordApp.InchesToPoints(1)
+        .LeftMargin = WordApp.InchesToPoints(1)
+        .RightMargin = WordApp.InchesToPoints(1.2)
     End With
   
   
   
-    'Copy Range from Excel
-    Set tbl = ThisWorkbook.Worksheets(Sheet1.Name).Range("B5:F12")
-    'Set tbl = ThisWorkbook.Worksheets(Sheet1.Name).Range("B18:K25")
-  
-    'Copy Excel Table Range
+    'Copy from Excel
+    Set tbl = ThisWorkbook.Worksheets(Sheet1.Name).range("B5:F12")
     tbl.Copy
- 
     'Paste Table into MS Word
-    Call myDoc.Paragraphs(1).Range.PasteExcelTable(LinkedToExcel:=False, WordFormatting:=False, RTF:=False)
- 
+    Call myDoc.Paragraphs(1).range.PasteExcelTable(LinkedToExcel:=False, WordFormatting:=False, RTF:=False)
     'Autofit Table so it fits inside Word Document
     Set WordTable = myDoc.Tables(1)
     WordTable.AutoFitBehavior (wdAutoFitWindow)
    
+    'Copy from Excel
+    Set tbl = ThisWorkbook.Worksheets(Sheet1.Name).range("B5:F12")
+    tbl.Copy
+    'Paste Table into MS Word
     With myDoc.Content
         .InsertParagraphAfter
-        .Paragraphs.Last.Range.PasteExcelTable LinkedToExcel:=False, WordFormatting:=False, RTF:=False
+        .Paragraphs.Last.range.PasteExcelTable LinkedToExcel:=False, WordFormatting:=False, RTF:=False
     End With
     Set WordTable = myDoc.Tables(2)
     WordTable.AutoFitBehavior (wdAutoFitWindow)
   
-  
+    'New page???
     myDoc.Sections.Add
-  
+    myDoc.Sections(2).PageSetup.Orientation = wdOrientLandscape
     '  myDoc.Content.InsertParagraphAfter
     'myDoc.Content.InsertAfter ("ab")
     'myDoc.Content.InsertBreak Word.WdBreakType.wdSectionBreakNextPage
    
   
+    Set tbl = ThisWorkbook.Worksheets(Sheet1.Name).range("B5:F12")
     tbl.Copy
     With myDoc.Content
         .InsertParagraphAfter
-        .Paragraphs.Last.Range.PasteExcelTable LinkedToExcel:=False, WordFormatting:=False, RTF:=False
+        .Paragraphs.Last.range.PasteExcelTable LinkedToExcel:=False, WordFormatting:=False, RTF:=False
     End With
     Set WordTable = myDoc.Tables(3)
     WordTable.AutoFitBehavior (wdAutoFitWindow)
     'WordApp.Selection.PageSetup.Orientation = wdOrientLandscape
-   myDoc.Sections(2).PageSetup.Orientation = wdOrientLandscape
+   
+    'WordTable.PreferredWidthType = wdPreferredWidthPoints ' may not be reflected
+    'WordTable.PreferredWidth = WordApp.InchesToPoints(9)
+    'WordTable.Cell(2, 1).Width = WordApp.InchesToPoints(1)
+    WordTable.PreferredWidthType = wdPreferredWidthPercent
+    WordTable.PreferredWidth = 120               '%
+   
+    Dim c1 As Word.Cells
+   
+    Dim myRange As Word.range
+    Set myRange = myDoc.range(Start:=myDoc.Tables(3).Cell(2, 2).range.Start, End:=myDoc.Tables(3).Cell(2, 5).range.End)
+    myRange.Select
+    Word.Selection.Cells.Width = 40              '   Word.Selection.Cells.DistributeWidth
+    Word.Selection.ParagraphFormat.Alignment = wdAlignParagraphCenter
+
+    
+    Dim rng1 As Variant
+    Set rng1 = myDoc.range(Start:=myDoc.Tables(3).Cell(2, 1).range.Start, End:=myDoc.Tables(3).Cell(2, 5).range.End).Cells
+  
+    Dim cc As Word.Cell
+    For Each cc In rng1
+        cc.Width = WordApp.InchesToPoints(1)
+        cc.range.ParagraphFormat.Alignment = wdAlignParagraphCenter
+    Next cc
    
    
-   WordTable.PreferredWidthType = wdPreferredWidthPoints
-   WordTable.PreferredWidth = WordApp.InchesToPoints(9)
-   WordTable.Cell(2, 1).Width = WordApp.InchesToPoints(1)
    
+    'Selection.Cells.DistributeWidth
     'Call myDoc.Paragraphs(2).Range.PasteExcelTable(LinkedToExcel:=False, WordFormatting:=False, RTF:=False)
    
     'Call myDoc.Paragraphs(myDoc.Paragraphs.Count).Range.PasteExcelTable(LinkedToExcel:=False, WordFormatting:=False, RTF:=False)
-  
-    '  Call myDoc.Bookmarks(BookmarkArray(1)).Range.PasteExcelTable(LinkedToExcel:=False, WordFormatting:=False, RTF:=False)
    
    
    
@@ -119,6 +137,5 @@ EndRoutine:
     Application.CutCopyMode = False
  
 End Sub
-
 
 
