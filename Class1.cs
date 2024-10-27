@@ -1,83 +1,145 @@
-Option Explicit
+using OpenMcdf; //https://github.com/ironfede/openmcdf
+using System.IO;
+using System.IO.Compression;
+using System.IO.Pipes;
+using System.Text;
+using static System.Net.WebRequestMethods;
 
-Private Const PAGE_EXECUTE_READWRITE = &H40
 
-Private Declare PtrSafe Sub MoveMemory Lib "kernel32" Alias "RtlMoveMemory" _
-(Destination As LongPtr, Source As LongPtr, ByVal Length As LongPtr)
+namespace unlockVBA
+{
+    internal class Program
+    {
+        static void Main(string[] args)
+        {
+            string filenameFullPath = @"..\..\..\VBA_password_abc.xlsm";
+            if (args.Length > 0) { filenameFullPath = args[0]; /*Console.WriteLine(args[0]);*/ }
 
-Private Declare PtrSafe Function VirtualProtect Lib "kernel32" (lpAddress As LongPtr, _
-ByVal dwSize As LongPtr, ByVal flNewProtect As LongPtr, lpflOldProtect As LongPtr) As LongPtr
+            string fname = Path.GetFileName(filenameFullPath);
 
-Private Declare PtrSafe Function GetModuleHandleA Lib "kernel32" (ByVal lpModuleName As String) As LongPtr
 
-Private Declare PtrSafe Function GetProcAddress Lib "kernel32" (ByVal hModule As LongPtr, _
-ByVal lpProcName As String) As LongPtr
+            byte[] file_dat = System.IO.File.ReadAllBytes(filenameFullPath);
+            clearVBAprotection(new MemoryStream(file_dat), "(unprotected VBA)" + fname);
 
-Private Declare PtrSafe Function DialogBoxParam Lib "user32" Alias "DialogBoxParamA" (ByVal hInstance As LongPtr, _
-ByVal pTemplateName As LongPtr, ByVal hWndParent As LongPtr, _
-ByVal lpDialogFunc As LongPtr, ByVal dwInitParam As LongPtr) As Integer
 
-Dim HookBytes(0 To 11) As Byte
-Dim OriginBytes(0 To 11) As Byte
-Dim pFunc As LongPtr
-Dim Flag As Boolean
+            return;
 
-Private Function GetPtr(ByVal Value As LongPtr) As LongPtr
-    GetPtr = Value
-End Function
+            string filePathOfvbaProject = @"..\..\..\vbaProject.bin";
+            file_dat = System.IO.File.ReadAllBytes(filePathOfvbaProject);
+            generateUnprotected_vbaProject(new MemoryStream(file_dat));
 
-Public Sub RecoverBytes()
-    If Flag Then MoveMemory ByVal pFunc, ByVal VarPtr(OriginBytes(0)), 12
-End Sub
+        }
+        //7za.exe x archive.zip -o outputdir a.xml -r
+        // 7z e 1.xlsm xl\vbaproject.bin -aoa  (Overwrite All existing files without prompt)
 
-Public Function Hook() As Boolean
-    Dim TmpBytes(0 To 11) As Byte
-    Dim p As LongPtr, osi As Byte
-    Dim OriginProtect As LongPtr
+        public static void clearVBAprotection(MemoryStream fileStream, string outFileName)
+        {
+            // Input xlsm filestream
+            byte[] bytes_new_vbaProject;
+            using (var srcXLSM = new ZipArchive(fileStream, ZipArchiveMode.Update, false))
+            {
+                //foreach (var entry in zip.Entries) { var ss = entry.FullName; Console.WriteLine(ss); }
+                var vbaProject_Entry = srcXLSM.GetEntry("xl/vbaProject.bin");
+                if (vbaProject_Entry == null)
+                {
+                    Console.WriteLine("Error: xl/vbaProject.bin does not exist.");
+                    Environment.Exit(-1);
+                }
 
-    Hook = False
+                //using (var memStream_vbaProject = new MemoryStream())
+                using (var memStream = new MemoryStream())
+                using (var wrapped_stream = vbaProject_Entry.Open())
+                {
+                        wrapped_stream.CopyTo(memStream);
+                    var memStream_new_vbaProject = generateUnprotected_vbaProject(memStream);
+                    bytes_new_vbaProject = memStream_new_vbaProject.ToArray();
+                    //tmp.CopyTo(memStream_vbaProject);
+                }
 
-    #If Win64 Then
-        osi = 1
-    #Else
-        osi = 0
-    #End If
+                vbaProject_Entry.Delete(); // Delete "xl/vbaProject.bin"
 
-    pFunc = GetProcAddress(GetModuleHandleA("user32.dll"), "DialogBoxParamA")
+                using (var ms = new System.IO.MemoryStream())
+                {
+                    using (var zipArchive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+                    {
+                        foreach (var file in srcXLSM.Entries)
+                        {
+                            // add files
+                            var entry = zipArchive.CreateEntry(file.FullName);
+                            using (var es = entry.Open())
+                            {
+                                var tmp_stream = file.Open();
+                                tmp_stream.CopyTo(es);
+                            }
+                        }
+                        // Add "xl/vbaProject.bin"
+                        var entry2 = zipArchive.CreateEntry("xl/vbaProject.bin");
+                        using (var es = entry2.Open())
+                        {
+                            es.Write(bytes_new_vbaProject, 0, bytes_new_vbaProject.Length);
+                        }
+                    }
 
-    If VirtualProtect(ByVal pFunc, 12, PAGE_EXECUTE_READWRITE, OriginProtect) <> 0 Then
+                    // write memorystream to file
+                    using (FileStream zipToCreate = new FileStream(outFileName, FileMode.Create))
+                    {
+                        //fileStream.Seek(0, SeekOrigin.Begin);
+                        //fileStream.CopyTo(zipToCreate);
+                        ms.Position = 0;
+                        ms.WriteTo(zipToCreate);
+                    }
+                }
+            }
 
-        MoveMemory ByVal VarPtr(TmpBytes(0)), ByVal pFunc, osi+1
-        If TmpBytes(osi) <> &HB8 Then
+            return;
+        }
 
-            MoveMemory ByVal VarPtr(OriginBytes(0)), ByVal pFunc, 12
+        //static void createNew_vbaProject(string filePathOfvbaProject)
+        //static void createNew_vbaProject(MemoryStream filePathOfvbaProject)
+        static MemoryStream generateUnprotected_vbaProject(MemoryStream filePathOfvbaProject)
+        {
+            //string filePathOfvbaProject = @"..\..\..\vbaProject.bin";
 
-            p = GetPtr(AddressOf MyDialogBoxParam)
+            // Extract "PROJECT" from vbaProject.bin as bytes
+            CompoundFile cf = new CompoundFile(filePathOfvbaProject);
+            CFStream foundStream = cf.RootStorage.GetStream("PROJECT");
+            byte[] bytePROJECT = foundStream.GetData();
 
-            If osi Then HookBytes(0) = &H48
-            HookBytes(osi) = &HB8
-            osi = osi + 1
-            MoveMemory ByVal VarPtr(HookBytes(osi)), ByVal VarPtr(p), 4 * osi
-            HookBytes(osi + 4 * osi) = &HFF
-            HookBytes(osi + 4 * osi + 1) = &HE0
+            // Convert bytes[] to line by line text
+            string[] PROJECT_file = Encoding.UTF8.GetString(bytePROJECT).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
 
-            MoveMemory ByVal pFunc, ByVal VarPtr(HookBytes(0)), 12
-            Flag = True
-            Hook = True
-        End If
-    End If
-End Function
+            // Replace properties. Unlock, no pass
+            for (int i = 0; i < PROJECT_file.Length; i++)
+            {
+                string s = PROJECT_file[i];
+                //https://github.com/outflanknl/EvilClippy/blob/master/evilclippy.cs
+                if (s.StartsWith("ID=")) { PROJECT_file[i] = "ID=\"{595FFAAA-903C-4C82-8C80-B10F9F008836}\""; }
+                if (s.StartsWith("CMG=")) { PROJECT_file[i] = "CMG=\"AFAD4D2053600664066406640664\""; }
+                if (s.StartsWith("DPB=")) { PROJECT_file[i] = "DPB=\"5E5CBC91C4EF72F072F072\""; }
+                if (s.StartsWith("GC=")) { PROJECT_file[i] = "GC=\"0D0FEF5E310C320C32F3\""; }
+            }
 
-Private Function MyDialogBoxParam(ByVal hInstance As LongPtr, _
-ByVal pTemplateName As LongPtr, ByVal hWndParent As LongPtr, _
-ByVal lpDialogFunc As LongPtr, ByVal dwInitParam As LongPtr) As Integer
+            // Reconstruct "PROJECT"
+            StringBuilder outPROJECT = new StringBuilder();
+            for (int i = 0; i < PROJECT_file.Length; i++)
+            {
+                outPROJECT.AppendLine(PROJECT_file[i]);
+            }
+            var bytesNewProject = Encoding.GetEncoding("UTF-8").GetBytes(outPROJECT.ToString().ToArray());
 
-    If pTemplateName = 4070 Then
-        MyDialogBoxParam = 1
-    Else
-        RecoverBytes
-        MyDialogBoxParam = DialogBoxParam(hInstance, pTemplateName, _
-                   hWndParent, lpDialogFunc, dwInitParam)
-        Hook
-    End If
-End Function
+            // Replace "PROJECT" file in vbaProject.bin
+            cf.RootStorage.Delete("PROJECT");
+            CFStream myStream = cf.RootStorage.AddStream("PROJECT");
+            myStream.SetData(bytesNewProject);
+            //cf.Commit();
+
+
+            //cf.SaveAs("out_vbaProject.bin");
+            MemoryStream ms = new MemoryStream();
+            cf.Save(ms);
+
+            cf.Close();
+            return ms;
+        }
+    }
+}
