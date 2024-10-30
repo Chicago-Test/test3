@@ -1,4 +1,5 @@
 using OpenMcdf; //https://github.com/ironfede/openmcdf
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.IO.Pipes;
@@ -12,8 +13,17 @@ namespace unlockVBA
     {
         static void Main(string[] args)
         {
-            string filenameFullPath = @"..\..\..\Book1.xls";
-            if (args.Length > 0) { filenameFullPath = args[0]; /*Console.WriteLine(args[0]);*/ }
+            string filenameFullPath = null;
+
+
+            //filenameFullPath = @"..\..\..\Book1.xls";
+            filenameFullPath = @"C:\Users\Administrator\source\repos\unlockVBA\VBA_password_abc.xls";
+
+            if (Debugger.IsAttached == false)
+            {
+                if (args.Length > 0) { filenameFullPath = args[0]; }
+                else { Console.WriteLine("Example: >" + "unlockVBA" + " \"c:\\abc\\def.xlsm\"" +"   (xlsm,xlsb,xlam,xls)"); }
+            }
 
             string fname = Path.GetFileName(filenameFullPath);
             string fileExtension_lowercase = Path.GetExtension(filenameFullPath).ToLower();
@@ -119,12 +129,15 @@ namespace unlockVBA
         {
             CompoundFile cf = new CompoundFile(memStream_XLS);
             MemoryStream retMemStream = new MemoryStream();
-            
-            var xxx = cf.RootStorage.TryGetStream("_VBA_PROJECT_CUR");
-            if(xxx == null) {
+
+            //CFStorage storage_VBA_PROJECT_CUR;
+            bool x = cf.RootStorage.TryGetStorage("_VBA_PROJECT_CUR", out CFStorage storage_VBA_PROJECT_CUR);
+            if (x == false)
+            {
                 return retMemStream;
             }
-            CFStream projectStream = cf.RootStorage.GetStorage("_VBA_PROJECT_CUR").GetStream("PROJECT");
+            CFStream projectStream = storage_VBA_PROJECT_CUR.GetStream("PROJECT");
+            //CFStream projectStream = cf.RootStorage.GetStorage("_VBA_PROJECT_CUR").GetStream("PROJECT");
 
             byte[] bytePROJECT = projectStream.GetData();
             byte[] bytesNewProject = updateProjectFile(bytePROJECT);
