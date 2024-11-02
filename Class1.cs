@@ -9,18 +9,22 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Security.Cryptography;
 
-using SevenZipExtractor; //SevenZipExtractor.1.0.17 //Source code in this repo is licensed under The MIT License
+//using SevenZipExtractor; //SevenZipExtractor.1.0.17 //Source code in this repo is licensed under The MIT License
+using SevenZip; // https://github.com/squid-box/SevenZipSharp  1.6.2.24 LPGL
 
 //https://github.com/bontchev/pcodedmp/tree/master
 //https://github.com/decalage2/oletools/wiki/olevba
 //https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-ovba/575462ba-bf67-4190-9fac-c275523c75fc
 
-namespace VBAStreamDecompress
+namespace MVGvbaExtractor
 {
-    public class MVGvbaDecompress
+    public class MVGvbaExtractor
     {
         static void Main(string[] args)
         {
+            ///Working on a 64 bit system and compiled to AnyCPU. But "Prefer 32 bit" option was checked.
+            ///Thus, the application was actually run as a 32 bit process and therefore couldn't process the native 64 bit DLL.
+            SevenZipBase.SetLibraryPath(@"C:\Program Files\7-Zip\7z.dll");
 
             string filePath = null;
 
@@ -31,7 +35,8 @@ namespace VBAStreamDecompress
             if (Debugger.IsAttached == false)
             {
                 if (args.Length > 0) { filePath = args[0]; }
-                else {
+                else
+                {
                     Console.WriteLine("Extract VBA codes as zip archive. Also returns hash of VBA.");
                     Console.WriteLine("Usage: (this).exe \"c:\\abc\\def.xlsm\"  (xls/xlsm/xlsb/xlam)");
                     Environment.Exit(0);
@@ -269,23 +274,21 @@ namespace VBAStreamDecompress
             // Archive VBA codes into zip and also returns hash of vba code
             byte[] vbaCodeHash = null;
 
-            using (ArchiveFile archiveFile = new ArchiveFile(fileStream))
-            {
-                foreach (Entry entry in archiveFile.Entries)
+
+            using (var archiveFile = new SevenZipExtractor(fileStream))
+                foreach (var entry in archiveFile.ArchiveFileData)
                 {
                     //Console.WriteLine(entry.FileName);
-
                     if (entry.FileName == @"xl\vbaProject.bin")
                     {
                         // extract to stream
                         MemoryStream memoryStream = new MemoryStream();
-                        entry.Extract(memoryStream);
+                        archiveFile.ExtractFile(entry.FileName, memoryStream);
                         memoryStream.Seek(0, SeekOrigin.Begin); // Need to set position to the start!!!
 
                         vbaCodeHash = processPROJECT(filenameFullPath, memoryStream);
                     }
                 }
-            }
             return vbaCodeHash;
         }
         public static byte[] archiveVBAcodes_XLS(MemoryStream fileStream, string filenameFullPath = "")
@@ -303,18 +306,17 @@ namespace VBAStreamDecompress
             List<string> moduleItems = new List<string>();
             string[] PROJECT_file = new string[1];
             //Compound File Binary Format
-            using (ArchiveFile archiveFile2 = new ArchiveFile(memoryStream, SevenZipFormat.Compound))
+            using (var archiveFile2 = new SevenZipExtractor(memoryStream, false, InArchiveFormat.Compound))
             {
-                foreach (Entry entry2 in archiveFile2.Entries)
+                foreach (var entry2 in archiveFile2.ArchiveFileData)
                 {
                     //Console.WriteLine(entry2.FileName);
                     ProjectVBAItems.Add(entry2.FileName); // Get all the entries
 
                     MemoryStream memoryStream2 = new MemoryStream();
-                    //////if (entry2.FileName == "PROJECT")
                     if (entry2.FileName == "PROJECT" || entry2.FileName == "_VBA_PROJECT_CUR\\PROJECT") // Covers both xls and xlsm/xlsb
                     {
-                        entry2.Extract(memoryStream2);
+                        archiveFile2.ExtractFile(entry2.FileName, memoryStream2);
                         //memoryStream2.Seek(0, SeekOrigin.Begin); // Need to set position to the start!!!
                         PROJECT_file = Encoding.UTF8.GetString(memoryStream2.ToArray()).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
                         // don't break!!!
@@ -342,7 +344,8 @@ namespace VBAStreamDecompress
                             // There is a case lowercase characters changed to uppercase automatically...
                             int i = ProjectVBAItems.FindIndex(x => x.Equals("VBA\\" + c, StringComparison.OrdinalIgnoreCase)
                                                                 || x.Equals("_VBA_PROJECT_CUR\\VBA\\" + c, StringComparison.OrdinalIgnoreCase));
-                            (archiveFile2.Entries[i]).Extract(memoryStream3);
+                            archiveFile2.ExtractFile(i, memoryStream3);
+
                             byte[] srcCode = MVG_decompress_stream(memoryStream3.ToArray());
                             //System.IO.File.WriteAllBytes(c, xxx);
                             byte[] srcWithOutAttributes = truncateAttributes(srcCode);
