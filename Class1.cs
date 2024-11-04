@@ -1,412 +1,209 @@
-using System;
-using System.Collections.Generic;
+using OpenMcdf; //https://github.com/ironfede/openmcdf
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Linq;
+using System.IO.Pipes;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using System.Security.Cryptography;
+using static System.Net.WebRequestMethods;
 
-//using SevenZipExtractor; //SevenZipExtractor.1.0.17 //Source code in this repo is licensed under The MIT License
-using SevenZip; // https://github.com/squid-box/SevenZipSharp  1.6.2.24 LPGL
 
-//https://github.com/bontchev/pcodedmp/tree/master
-//https://github.com/decalage2/oletools/wiki/olevba
-//https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-ovba/575462ba-bf67-4190-9fac-c275523c75fc
-
-namespace MVGvbaExtractor
+namespace unlockVBA
 {
-    public class MVGvbaExtractor
+    internal class Program
     {
         static void Main(string[] args)
         {
-            ///Working on a 64 bit system and compiled to AnyCPU. But "Prefer 32 bit" option was checked.
-            ///Thus, the application was actually run as a 32 bit process and therefore couldn't process the native 64 bit DLL.
-            SevenZipBase.SetLibraryPath(@"C:\Program Files\7-Zip\7z.dll");
+            string filenameFullPath = null;
 
-            string filePath = null;
 
-            filePath = @"..\..\..\check-formula-protection_v1.88 - testing.xlsm";
-            //filePath = @"C:\Users\Administrator\source\repos\VBAStreamDecompress\check-formula-protection_v1.88 - testing.xlsm";
-            filePath = @"C:\Users\Administrator\source\repos\VBAStreamDecompress\check-formula-protection_v1.88 - testing.xls";
+            //filenameFullPath = @"..\..\..\Book1.xls";
+            filenameFullPath = @"C:\Users\Administrator\source\repos\unlockVBA\VBA_password_abc.xlsm";
 
             if (Debugger.IsAttached == false)
             {
-                if (args.Length > 0) { filePath = args[0]; }
+                if (args.Length > 0) { filenameFullPath = args[0]; }
                 else
                 {
-                    Console.WriteLine("Extract VBA codes as zip archive. Also returns hash of VBA.");
-                    Console.WriteLine("Usage: (this).exe \"c:\\abc\\def.xlsm\"  (xls/xlsm/xlsb/xlam)");
+                    Console.WriteLine("Example: >" + "unlockVBA" + " \"c:\\abc\\def.xlsm\"" + "   (xlsm,xlsb,xlam,xls)");
                     Environment.Exit(0);
                 }
             }
 
-            try
+            string fname = Path.GetFileName(filenameFullPath);
+            string fileExtension_lowercase = Path.GetExtension(filenameFullPath).ToLower();
+            string outFileName = "(unprotected VBA)" + fname;
+
+            byte[] file_dat = System.IO.File.ReadAllBytes(filenameFullPath);
+
+            if (fileExtension_lowercase.Equals(".xls"))
             {
-                byte[] hash = archiveVBAcodes(filePath);
-                Console.WriteLine("hash:" + Convert.ToString(hash[0], 16).ToUpper() + Convert.ToString(hash[1], 16).ToUpper() + Convert.ToString(hash[2], 16).ToUpper());
-                Console.WriteLine("Done");
-
-                //archiveVBAcodes2(new MemoryStream,""); // no VBA zip file output, just returns hash.
-
+                using (var memStream = testXLS(new MemoryStream(file_dat)))
+                {
+                    if (memStream.Length == 0)
+                    {
+                        Console.WriteLine("Error: VBA does not exist: " + fname);
+                        Environment.Exit(-1);
+                    }
+                    // write memorystream to file
+                    using (FileStream xlsToCreate = new FileStream(outFileName, FileMode.Create))
+                    {
+                        memStream.Position = 0;
+                        memStream.WriteTo(xlsToCreate);
+                    }
+                }
             }
-            catch (Exception)
+            else if (fileExtension_lowercase.Equals(".xlsm") || fileExtension_lowercase.Equals(".xlsb") || fileExtension_lowercase.Equals(".xlam"))
             {
-                throw;
+                clearVBAprotection_XLSM(new MemoryStream(file_dat), outFileName);
+            }
+            Console.WriteLine("Done:" + fname);
+            return;
+
+            string filePathOfvbaProject = @"..\..\..\vbaProject.bin";
+            file_dat = System.IO.File.ReadAllBytes(filePathOfvbaProject);
+            generateUnprotected_vbaProject(new MemoryStream(file_dat));
+
+        }
+        //7za.exe x archive.zip -o outputdir a.xml -r
+        // 7z e 1.xlsm xl\vbaproject.bin -aoa  (Overwrite All existing files without prompt)
+
+        public static void clearVBAprotection_XLSM(MemoryStream fileStream, string outFileName)
+        {
+            // Input filestream -> filestream of *.xlsm
+            byte[] bytes_new_vbaProject;
+            using (var srcXLSM = new ZipArchive(fileStream, ZipArchiveMode.Update, false))
+            {
+                //foreach (var entry in zip.Entries) { var ss = entry.FullName; Console.WriteLine(ss); }
+                var vbaProject_Entry = srcXLSM.GetEntry("xl/vbaProject.bin");
+                if (vbaProject_Entry == null)
+                {
+                    Console.WriteLine("Error: xl/vbaProject.bin does not exist. Didn't output: " + outFileName);
+                    Environment.Exit(-1);
+                }
+
+                //using (var memStream_vbaProject = new MemoryStream())
+                using (var memStream = new MemoryStream())
+                using (var wrapped_stream = vbaProject_Entry.Open())
+                {
+                    wrapped_stream.CopyTo(memStream);
+                    var memStream_new_vbaProject = generateUnprotected_vbaProject(memStream);
+                    bytes_new_vbaProject = memStream_new_vbaProject.ToArray();
+                    //tmp.CopyTo(memStream_vbaProject);
+                }
+
+                vbaProject_Entry.Delete(); // Delete "xl/vbaProject.bin"
+
+                using (var ms = new System.IO.MemoryStream())
+                {
+                    using (var zipArchive = new ZipArchive(ms, ZipArchiveMode.Create, true))
+                    {
+                        foreach (var file in srcXLSM.Entries)
+                        {
+                            // add files
+                            var entry = zipArchive.CreateEntry(file.FullName);
+                            using (var es = entry.Open())
+                            {
+                                var tmp_stream = file.Open();
+                                tmp_stream.CopyTo(es);
+                            }
+                        }
+                        // Add unprotected "xl/vbaProject.bin"
+                        var entry2 = zipArchive.CreateEntry("xl/vbaProject.bin");
+                        using (var es = entry2.Open())
+                        {
+                            es.Write(bytes_new_vbaProject, 0, bytes_new_vbaProject.Length);
+                        }
+                    }
+
+                    // write memorystream to file
+                    using (FileStream zipToCreate = new FileStream(outFileName, FileMode.Create))
+                    {
+                        //fileStream.Seek(0, SeekOrigin.Begin);
+                        //fileStream.CopyTo(zipToCreate);
+                        ms.Position = 0;
+                        ms.WriteTo(zipToCreate);
+                    }
+                }
             }
 
             return;
-
-            filePath = "../../modUnHideAllSheets";
-            byte[] buf = File.ReadAllBytes(filePath);
-            byte[] srcCode = MVG_decompress_stream(buf);
-            File.WriteAllBytes("$$$out.txt", srcCode);
         }
-        static private byte[] MVG_decompress_stream(byte[] buf)
+
+        static MemoryStream testXLS(MemoryStream memStream_XLS)
         {
-            // Search "00 00 FF FF FF FF 00 00 01" in Emeditor
-            byte[] patternByte = { 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01 };
+            CompoundFile cf = new CompoundFile(memStream_XLS);
+            MemoryStream retMemStream = new MemoryStream();
 
-            int indx = 0;
-            int i = 0;
-
-            // This will get first occurence of the pattern
-            //indx = Boyer_Moore.indexOf(buf, patternByte);
-
-            // Need to get the last occurence of the pattern
-            i = Boyer_Moore.indexOf(buf.Reverse().ToArray(), patternByte.Reverse().ToArray());
-            indx = buf.Length - (i + patternByte.Length);
-
-            var buf2 = buf.Skip(indx + 8).ToArray();
-            byte[] ret = decompress_stream(buf2);
-            return ret;
-        }
-        // Based on oledump python
-        static private (int, int, int, int) CopyTokenHelp(int decompressedCurrent, int decompressedChunkStart)
-        //public void CopyTokenHelp(int decompressedCurrent, int decompressedChunkStart)
-        {
-            int difference = decompressedCurrent - decompressedChunkStart;
-            int bitCount = (int)Math.Ceiling(Math.Log(difference, 2));
-            bitCount = Math.Max(bitCount, 4);
-            int lengthMask = 0xFFFF >> bitCount;
-            int offsetMask = ~lengthMask;
-            int maximumLength = (0xFFFF >> bitCount) + 3;
-            return (lengthMask, offsetMask, bitCount, maximumLength);
-            //return;
-        }
-        static private byte[] decompress_stream(byte[] compressedContainer)
-        {
-            //"""
-            //Decompress a stream according to MS-OVBA section 2.4.1
-
-            //:param compressed_container bytearray: bytearray or bytes compressed according to the MS-OVBA 2.4.1.3.6 Compression algorithm
-            //:return: the decompressed container as a bytes string
-            //:rtype: bytes
-            //"""
-
-            //# Check the input is a bytearray, otherwise convert it (assuming it's bytes):
-            if (!(compressedContainer is byte[]))
+            //CFStorage storage_VBA_PROJECT_CUR;
+            bool x = cf.RootStorage.TryGetStorage("_VBA_PROJECT_CUR", out CFStorage storage_VBA_PROJECT_CUR);
+            if (x == false)
             {
-                compressedContainer = new byte[compressedContainer.Length];
-                // throw new ArgumentException("decompress_stream requires a byte[] as input");
+                return retMemStream;
             }
-            // log.Debug("decompress_stream: compressed size = {0} bytes", compressedContainer.Length);
+            CFStream projectStream = storage_VBA_PROJECT_CUR.GetStream("PROJECT");
+            //CFStream projectStream = cf.RootStorage.GetStorage("_VBA_PROJECT_CUR").GetStream("PROJECT");
 
-            List<byte> decompressedContainer = new List<byte>(); //byte[] decompressedContainer = new byte[0]; // result
-
-            int compressedCurrent = 0;
-
-            // data starts from 0x01
-            byte sigByte = compressedContainer[compressedCurrent];
-            if (sigByte != 0x01)
-            {
-                throw new ArgumentException(string.Format("invalid signature byte {0:X2}", sigByte));
-            }
-
-            compressedCurrent++;
-
-            while (compressedCurrent < compressedContainer.Length)
-            {
-                //# 2.4.1.1.5
-                int compressed_chunk_start = compressedCurrent;
-                // chunk header = first 16 bits
-                int compressed_chunk_header = compressedContainer[compressed_chunk_start] + compressedContainer[compressed_chunk_start + 1] * 256;// struct.unpack("<H", compressed_container[compressed_chunk_start:compressed_chunk_start + 2])[0]  //little endian, unsighned short
-                                                                                                                                                  // chunk size = 12 first bits of header + 3
-
-                //YI chunk_header: 2 bytes. Little endian. In binary, it starts with 1011.... Remaining 12bit shows chunk size. Chunk size includes its own header.
-                //YI 2^12=4096. This can express [0,4095]. Because there is no zero size, add one and [1,4096]
-
-                int chunk_size = (compressed_chunk_header & 0x0FFF) + 3;
-                // chunk signature = 3 next bits - should always be 0b011
-                int chunk_signature = (compressed_chunk_header >> 12) & 0x07;
-                if (chunk_signature != 0b011)
-                {
-                    Debug.Print("Invalid CompressedChunkSignature in VBA compressed stream");
-                }
-
-                // chunk flag = next bit - 1 == compressed, 0 == uncompressed
-                int chunk_flag = (compressed_chunk_header >> 15) & 0x01;
-                //log.debug("chunk size = {}, offset = {}, compressed flag = {}".format(chunk_size, compressed_chunk_start, chunk_flag))
-                /*
-                # MS-OVBA 2.4.1.3.12: the maximum size of a chunk including its header is 4098 bytes (header 2 + data 4096)
-                # The minimum size is 3 bytes
-                # NOTE: there seems to be a typo in MS-OVBA, the check should be with 4098, not 4095 (which is the max value
-                # in chunk header before adding 3.
-                # Also the first test is not useful since a 12 bits value cannot be larger than 4095.
-                */
-                if (chunk_flag == 1 && chunk_size > 4098) { Debug.Print("CompressedChunkSize=%d > 4098 but CompressedChunkFlag == 1' % chunk_size"); }
-                if (chunk_flag == 0 && chunk_size != 4098) { Debug.Print("CompressedChunkSize=%d != 4098 but CompressedChunkFlag == 0' % chunk_size"); }
-
-                //# check if chunk_size goes beyond the compressed data, instead of silently cutting it:
-                //# TODO: raise an exception?
-                if (compressed_chunk_start + chunk_size > compressedContainer.Length)
-                {
-                    Console.WriteLine("Chunk size is larger than remaining compressed data");
-                }
-                int compressedEnd = Math.Min(compressedContainer.Length, compressed_chunk_start + chunk_size);
-                // read after chunk header:
-                compressedCurrent = compressed_chunk_start + 2;
-
-
-                if (chunk_flag == 0)
-                {
-                    // MS-OVBA 2.4.1.3.3 Decompressing a RawChunk
-                    // uncompressed chunk: read the next 4096 bytes as-is
-                    //TODO: check if there are at least 4096 bytes left
-
-                    ////////decompressedContainer.AddRange(compressedContainer.GetRange(compressedCurrent, 4096));
-                    compressedCurrent += 4096;
-                }
-                else
-                {
-                    // MS-OVBA 2.4.1.3.2 Decompressing a CompressedChunk
-                    // compressed chunk
-                    int decompressedChunkStart = decompressedContainer.Count();
-                    while (compressedCurrent < compressedEnd)
-                    {
-                        byte flagByte = compressedContainer[compressedCurrent];
-                        compressedCurrent++;
-                        for (int bitIndex = 0; bitIndex < 8; bitIndex++)
-                        {
-                            // code logic here
-                            if (compressedCurrent >= compressedEnd) break;
-                            int flagBit = (flagByte >> bitIndex) & 1;
-                            //log.Debug("bitIndex={0}: flagBit={1}", bitIndex, flagBit);
-                            if (flagBit == 0) // LiteralToken
-                            {
-                                // copy one byte directly to output
-                                decompressedContainer.Add(compressedContainer[compressedCurrent]);
-                                compressedCurrent++;
-                            }
-                            else
-                            {
-                                //var copy_token = 999;//=struct.unpack("<H", compressed_container[compressed_current:compressed_current + 2])[0];
-                                var copy_token = compressedContainer[compressedCurrent] + compressedContainer[compressedCurrent + 1] * 256;
-
-                                // TODO: check this
-                                int lengthMask, offsetMask, bitCount;
-                                int length;
-                                int temp1, temp2, offset;
-                                int copySource;
-
-                                //return (lengthMask, offsetMask, bitCount, maximumLength);
-                                var result = CopyTokenHelp(decompressedContainer.Count, decompressedChunkStart);
-                                lengthMask = result.Item1;
-                                offsetMask = result.Item2;
-                                bitCount = result.Item3;
-
-                                length = (copy_token & lengthMask) + 3;
-                                temp1 = copy_token & offsetMask;
-                                temp2 = 16 - bitCount;
-                                offset = (temp1 >> temp2) + 1;
-
-                                // log.Debug($"offset={offset} length={length}");
-
-                                copySource = decompressedContainer.Count - offset;
-
-                                for (int index = copySource; index < copySource + length; index++)
-                                {
-                                    decompressedContainer.Add(decompressedContainer[index]);
-                                }
-                                compressedCurrent += 2;
-                            }
-                        }
-                    }
-                }
-
-
-            }
-            return decompressedContainer.ToArray();
-        }
-        private static int PatternAt(byte[] source, byte[] pattern)
-        {
-            // Too slow..... Don't use
-            int ret = 0;
-            for (int i = 0; i < source.Length; i++)
-            {
-                if (source.Skip(i).Take(pattern.Length).SequenceEqual(pattern))
-                {
-                    ret = i;
-                }
-            }
-            return ret;
-        }
-        public static byte[] archiveVBAcodes(string filenameFullPath)
-        {
-            byte[] file_dat = File.ReadAllBytes(filenameFullPath);
-            byte[] hash = null;
-
-            string fileExtension_lowercase = Path.GetExtension(filenameFullPath).ToLower();
-            if (fileExtension_lowercase.Equals(".xls"))
-            {
-                hash = archiveVBAcodes_XLS(new MemoryStream(file_dat), filenameFullPath);
-            }
-            else
-            {
-                hash = archiveVBAcodes2(new MemoryStream(file_dat), filenameFullPath);
-            }
-            return hash;
-        }
-        public static byte[] archiveVBAcodes2(MemoryStream fileStream, string filenameFullPath = "")
-        {
-            // Archive VBA codes into zip and also returns hash of vba code
-            byte[] vbaCodeHash = null;
-
-
-            using (var archiveFile = new SevenZipExtractor(fileStream))
-                foreach (var entry in archiveFile.ArchiveFileData)
-                {
-                    //Console.WriteLine(entry.FileName);
-                    if (entry.FileName == @"xl\vbaProject.bin")
-                    {
-                        // extract to stream
-                        MemoryStream memoryStream = new MemoryStream();
-                        archiveFile.ExtractFile(entry.FileName, memoryStream);
-                        memoryStream.Seek(0, SeekOrigin.Begin); // Need to set position to the start!!!
-
-                        vbaCodeHash = processPROJECT(filenameFullPath, memoryStream);
-                    }
-                }
-            return vbaCodeHash;
-        }
-        public static byte[] archiveVBAcodes_XLS(MemoryStream fileStream, string filenameFullPath = "")
-        {
-            // Archive VBA codes into zip and also returns hash of vba code
-            byte[] vbaCodeHash = null;
-            vbaCodeHash = processPROJECT(filenameFullPath, fileStream);
-            return vbaCodeHash;
+            byte[] bytePROJECT = projectStream.GetData();
+            byte[] bytesNewProject = updateProjectFile(bytePROJECT);
+            // Replace "PROJECT" file
+            cf.RootStorage.GetStorage("_VBA_PROJECT_CUR").Delete("PROJECT");
+            CFStream myStream = cf.RootStorage.GetStorage("_VBA_PROJECT_CUR").AddStream("PROJECT");
+            myStream.SetData(bytesNewProject);
+            cf.Save(retMemStream);
+            cf.Close();
+            return retMemStream;
         }
 
-        private static byte[] processPROJECT(string filenameFullPath, MemoryStream memoryStream)
+        //static void createNew_vbaProject(string filePathOfvbaProject)
+        //static void createNew_vbaProject(MemoryStream filePathOfvbaProject)
+        static MemoryStream generateUnprotected_vbaProject(MemoryStream memStream_vbaProject)
         {
-            byte[] vbaCodeHash;
-            List<string> ProjectVBAItems = new List<string>();
-            List<string> moduleItems = new List<string>();
-            string[] PROJECT_file = new string[1];
-            //Compound File Binary Format
-            using (var archiveFile2 = new SevenZipExtractor(memoryStream, false, InArchiveFormat.Compound))
+            //string filePathOfvbaProject = @"..\..\..\vbaProject.bin";
+
+            // Extract "PROJECT" from vbaProject.bin as bytes
+            CompoundFile cf = new CompoundFile(memStream_vbaProject);
+            CFStream projectStream = cf.RootStorage.GetStream("PROJECT");
+            byte[] bytePROJECT = projectStream.GetData();
+
+            byte[] bytesNewProject = updateProjectFile(bytePROJECT);
+
+            // Replace "PROJECT" file in vbaProject.bin
+            cf.RootStorage.Delete("PROJECT");
+            CFStream myStream = cf.RootStorage.AddStream("PROJECT");
+            myStream.SetData(bytesNewProject);
+            //cf.Commit();
+
+            //cf.SaveAs("out_vbaProject.bin");
+            MemoryStream retMemStream = new MemoryStream();
+            cf.Save(retMemStream);
+
+            cf.Close();
+            return retMemStream;
+        }
+        static byte[] updateProjectFile(byte[] bytePROJECT)
+        {
+            // Convert bytes[] to line by line text
+            string[] PROJECT_file = Encoding.UTF8.GetString(bytePROJECT).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
+
+            // Replace properties. Unlock, no pass
+            for (int i = 0; i < PROJECT_file.Length; i++)
             {
-                foreach (var entry2 in archiveFile2.ArchiveFileData)
-                {
-                    //Console.WriteLine(entry2.FileName);
-                    ProjectVBAItems.Add(entry2.FileName); // Get all the entries
-
-                    MemoryStream memoryStream2 = new MemoryStream();
-                    if (entry2.FileName == "PROJECT" || entry2.FileName == "_VBA_PROJECT_CUR\\PROJECT") // Covers both xls and xlsm/xlsb
-                    {
-                        archiveFile2.ExtractFile(entry2.FileName, memoryStream2);
-                        //memoryStream2.Seek(0, SeekOrigin.Begin); // Need to set position to the start!!!
-                        PROJECT_file = Encoding.UTF8.GetString(memoryStream2.ToArray()).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
-                        // don't break!!!
-                    }
-                }
-                for (int i = 0; i < PROJECT_file.Length; i++)
-                {
-                    string s = PROJECT_file[i];
-                    if (s.StartsWith("Document=")) { moduleItems.Add(s.Substring(9, s.Length - 20)); } // e.g. Document=ThisWorkbook/&H00000000
-                    if (s.StartsWith("Module=")) { moduleItems.Add(s.Substring(7, s.Length - 7)); }
-                    if (s.StartsWith("Class=")) { moduleItems.Add(s.Substring(6, s.Length - 6)); }
-                    if (s.StartsWith("BaseClass=")) { moduleItems.Add(s.Substring(10, s.Length - 10)); }
-                    //if (s == "Name=\"VBAProject\"") { break; } // VBA project name can be changed from the default "VBAProject"
-                    if (s.StartsWith("Name=")) { break; }
-                }
-                ////////////////////////////
-                using (var ms = new System.IO.MemoryStream())
-                {
-                    using (var msAllCodes = new MemoryStream())
-                    using (var zipArchive = new ZipArchive(ms, ZipArchiveMode.Create, true))
-                    {
-                        foreach (var c in moduleItems)
-                        {
-                            MemoryStream memoryStream3 = new MemoryStream();
-                            // There is a case lowercase characters changed to uppercase automatically...
-                            int i = ProjectVBAItems.FindIndex(x => x.Equals("VBA\\" + c, StringComparison.OrdinalIgnoreCase)
-                                                                || x.Equals("_VBA_PROJECT_CUR\\VBA\\" + c, StringComparison.OrdinalIgnoreCase));
-                            archiveFile2.ExtractFile(i, memoryStream3);
-
-                            byte[] srcCode = MVG_decompress_stream(memoryStream3.ToArray());
-                            //System.IO.File.WriteAllBytes(c, xxx);
-                            byte[] srcWithOutAttributes = truncateAttributes(srcCode);
-                            msAllCodes.Write(srcWithOutAttributes, 0, srcWithOutAttributes.Length);
-                            //var tmpHash = new SHA256CryptoServiceProvider().ComputeHash(srcCode);
-
-                            var entry2 = zipArchive.CreateEntry(c);
-                            using (var es = entry2.Open())
-                            {
-                                es.Write(srcCode, 0, srcCode.Length);
-                            }
-                        }
-                        vbaCodeHash = new SHA256CryptoServiceProvider().ComputeHash(msAllCodes.ToArray());
-                    }
-
-                    if (filenameFullPath.Length > 0)
-                    {
-                        string str = filenameFullPath;
-                        int n = str.LastIndexOf("\\");
-                        if (n >= 0) { str = str.Substring(n + 1); }
-                        string outFileFullPath = System.AppDomain.CurrentDomain.BaseDirectory + "(VBAcode)" + str + ".zip";
-                        System.IO.File.WriteAllBytes(outFileFullPath, ms.ToArray());
-                    }
-                }
-                ////////////////////////////
+                string s = PROJECT_file[i];
+                //https://github.com/outflanknl/EvilClippy/blob/master/evilclippy.cs
+                if (s.StartsWith("ID=")) { PROJECT_file[i] = "ID=\"{595FFAAA-903C-4C82-8C80-B10F9F008836}\""; }
+                if (s.StartsWith("CMG=")) { PROJECT_file[i] = "CMG=\"AFAD4D2053600664066406640664\""; }
+                if (s.StartsWith("DPB=")) { PROJECT_file[i] = "DPB=\"5E5CBC91C4EF72F072F072\""; }
+                if (s.StartsWith("GC=")) { PROJECT_file[i] = "GC=\"0D0FEF5E310C320C32F3\""; }
             }
 
-            return vbaCodeHash;
-        }
-
-        /// <summary>
-        /// Remove Attribute/VERSION, Begin/End headers
-        /// </summary>
-        /// <returns></returns>
-        private static byte[] truncateAttributes(byte[] inBytes)
-        {
-            using (var ms1 = new MemoryStream())
+            // Reconstruct "PROJECT"
+            StringBuilder outPROJECT = new StringBuilder();
+            for (int i = 0; i < PROJECT_file.Length; i++)
             {
-                var x = Encoding.UTF8.GetString(inBytes.ToArray()).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
-                for (int i = 0; i < x.Length; i++)
-                {
-                    if (x[i].IndexOf("Attribute ") == 0) continue;
-                    if (x[i].IndexOf("VERSION ") == 0) continue;
-
-                    // Skip BEGIN-END lines
-                    if (x[i].Trim().ToUpper().IndexOf("BEGIN") == 0)
-                    { //# class: "BEGIN","END"  frm:"Begin","End"
-                        do
-                        {
-                            i++;
-                        } while (x[i].Trim().ToUpper().IndexOf("END") == 0);
-                        continue;
-                    }
-
-
-                    ms1.Write(Encoding.GetEncoding("UTF-8").GetBytes(x[i]), 0, x[i].Length);
-                    ms1.WriteByte(0x0D); ms1.WriteByte(0x0A);
-                }
-                //var tmp = Encoding.UTF8.GetString(ms1.ToArray()).Split(new string[] { Environment.NewLine }, StringSplitOptions.None);
-                return ms1.ToArray();
+                outPROJECT.AppendLine(PROJECT_file[i]);
             }
+            var bytesNewProject = Encoding.GetEncoding("UTF-8").GetBytes(outPROJECT.ToString().ToArray());
+            return bytesNewProject;
         }
     }
 }
