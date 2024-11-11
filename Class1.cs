@@ -2,7 +2,15 @@
 # Need to restart powershell session when changing c#.
 # powershell.exe -noprofile -executionpolicy bypass -file GenerateDBP.ps1
 
-#cls
+$passwd = '!@#$%^&*()+=[]{};:<>?'
+
+$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\MVG-change-password_v1.4(64bit).xlsm'
+$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\a.xls'
+$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xls'
+$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xlsm'
+$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\a_pass$$.xls'
+
+##############################################################
 Remove-Variable * -ErrorAction SilentlyContinue
 cd $PSScriptRoot
 
@@ -10,17 +18,8 @@ Remove-Item "vbaProject.bin" -Force -ErrorAction SilentlyContinue
 Remove-Item "PROJECT" -Force -ErrorAction SilentlyContinue
 $7zipPath = "C:\Program Files\7-Zip\7z.exe"
 
-$DPB = ""
-$passwd = ""
 
-if ($Args.Count -gt 1) { $excelFilePath = $Args[0];$passwd=$Args[1] }else {
-  $excelFilePath = "C:\Users\Administrator\source\repos\GenerateDBP_powershell\MVG-change-password_v1.4(64bit).xlsm"
-  $excelFilePath = "C:\Users\Administrator\source\repos\GenerateDBP_powershell\a.xls"
-  $excelFilePath = "C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xls"
-  $excelFilePath = "C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xlsm"
-  $excelFilePath = "C:\Users\dfs.xlsm"
-  $passwd = "MVG"
-}
+#if ($Args.Count -gt 1) { $excelFilePath = $Args[0];$passwd=$Args[1] }else {}
 
 if ([System.IO.File]::Exists($excelFilePath) -eq $false) {
   Write-Host "File does not exist";
@@ -48,6 +47,7 @@ if ([System.IO.File]::Exists(".\PROJECT") -eq $false) {
   exit;
 }
 
+$DPB = ""
 # Extract "DPB=" line
 foreach ($line in Get-Content .\PROJECT) {
   #There are differences between foreach and foreach-object
