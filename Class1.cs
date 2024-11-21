@@ -1,259 +1,466 @@
-# save as UTF-8 with BOM
-# Need to restart powershell session when changing c#.
-# powershell.exe -noprofile -executionpolicy bypass -file GenerateDBP.ps1
-
-$passwd = '!@#$%^&*()+=[]{};:<>?'
-
-$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\MVG-change-password_v1.4(64bit).xlsm'
-$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\a.xls'
-$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xls'
-$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\no_VBA.xlsm'
-$excelFilePath = 'C:\Users\Administrator\source\repos\GenerateDBP_powershell\a_pass$$.xls'
-
-##############################################################
-Remove-Variable * -ErrorAction SilentlyContinue
-cd $PSScriptRoot
-
-Remove-Item "vbaProject.bin" -Force -ErrorAction SilentlyContinue
-Remove-Item "PROJECT" -Force -ErrorAction SilentlyContinue
-$7zipPath = "C:\Program Files\7-Zip\7z.exe"
-
-
-#if ($Args.Count -gt 1) { $excelFilePath = $Args[0];$passwd=$Args[1] }else {}
-
-if ([System.IO.File]::Exists($excelFilePath) -eq $false) {
-  Write-Host "File does not exist";
-  exit;
-}
-
-$x = $excelFilePath.Split(".")[-1]
-if ($x -eq "xlsm" -or $x -eq "xlsb") {
-  $cmdArgs1 = " e " + """" + $excelFilePath + """ " + """" + "xl\vbaProject.bin" + """"
-  $cmdArgs2 = " e " + "vbaProject.bin PROJECT"
-  Start-Process -FilePath $7zipPath -ArgumentList $cmdArgs1 -Wait
-  Start-Process -FilePath $7zipPath -ArgumentList $cmdArgs2 -Wait
-}
-elseif ($x -eq "xls") {
-  $cmdArgs1 = " e " + """" + $excelFilePath + """ " + "_VBA_PROJECT_CUR\PROJECT" + """"
-  Start-Process -FilePath $7zipPath -ArgumentList $cmdArgs1 -Wait
-}
-else {
-  Write-Host "Input file is not xlsm/xlsb/xls"
-  exit;
-}
-
-if ([System.IO.File]::Exists(".\PROJECT") -eq $false) {
-  Write-Host "no VBA (no PROJECT file)";
-  exit;
-}
-
-$DPB = ""
-# Extract "DPB=" line
-foreach ($line in Get-Content .\PROJECT) {
-  #There are differences between foreach and foreach-object
-  if ($line -match "^(DPB=)") {
-    #Write-Host $line.ToString()
-    $DPB = $line.Substring(5, $line.Length - 6)
-    break;
-  }
-}
-
-if ($DPB.Length -lt 50) { Write-Host "VBA not locked"; exit; }
-
-$source = @"
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Security.Cryptography;
-using System.Text;
-
-namespace GenerateDBP
-{
-    public static class Program
-    {
-        public static string Main1(string strDPB,string passwd)
-        {
-            string str;
-            byte seed;
-
-            //strDPB = "94963888C84FE54FE5B01B50E59251526FE67A1CC76C84ED0DAD653FD058F324BFD9D38DED37";
-
-            seed = Convert.ToByte(strDPB.Substring(0, 2), 16);
-
-            // Check decrypt->encrypt will produce the original string
-            byte[] y = decryptDPB(strDPB); // Returned first byte is a seed. Last byte is 0x00
-            byte[] z1 = encryptDPB(BitConverter.ToString(y.ToArray()).Replace("-", "").Substring(2), seed); // Specify seed
-            str = BitConverter.ToString(z1.ToArray()).Replace("-", "");
-            //if (str == strDPB) { Console.WriteLine("Two strings are equal"); }
-
-            // Extract Key for the Password Hash Algorithm
-
-            byte[] passKey;
-            try
-            {
-                passKey = GetPassKeyWithNull(strDPB);
-            }
-            catch (Exception)
-            {
-                //Console.WriteLine("no password");
-                return "no password";
-            }
-
-            bool blRet;
-            blRet = IsPasswordCorrect(strDPB, passwd);
-            //if (blRet == true) { Console.WriteLine("passwd correct"); } else { Console.WriteLine("passwd wrong"); }
-            if (blRet == true) { str="passwd correct"; } else { str="passwd wrong"; }
-
-            return str;
-        }
-
-        private static byte[] GetPassKeyWithNull(string strDPB)
-        {
-            byte seed = Convert.ToByte(strDPB.Substring(0, 2), 16);
-            byte[] y = decryptDPB(strDPB); // Returned first byte is a seed. Last byte is 0x00
-
-            int IgnoredLength = (seed & 6) / 2;
-
-            byte[] datalength = new byte[4];
-            Buffer.BlockCopy(y, 1 + 2 + IgnoredLength, datalength, 0, 4); // Always {0x1d, 0x00, 0x00, 0x00 }? If no password {0x01,0x00,0x00,0x00}?
-
-            int headerLength = 1 + 2 + IgnoredLength + 4; // Header: Seed,ver,projkey, ignored bytes
-            string dat1 = BitConverter.ToString(y.ToArray()).Replace("-", "").Substring(2 * headerLength); // DATA
-            //Console.WriteLine(dat1);
-
-            //var byteDat1 = Enumerable.Range(0, s1.Length / 2).Select(x => Convert.ToByte(s1.Substring(x * 2, 2), 16)).ToArray(); // Hex string to byte[]
-            var byteDat1 = y.Skip(headerLength).ToArray();
-            //byteDat1[0] must be 0xFF.  xx[28] must be Terminator 0x00
-            if (byteDat1[0] != 0xFF) { Console.WriteLine("corrupt data"); } //MUST be 0xFF. MUST be ignored
-            byte[] Grbits = new byte[3]; //Each bit specifies a corresponding null byte of Key or Password Hash
-            Buffer.BlockCopy(byteDat1, 1, Grbits, 0, 3);
-            //Replace byte[] data with 0x00 based on Grbits
-
-            string bitString = Convert.ToString(Grbits[0] * 256 * 256 + Grbits[1] * 256 + Grbits[2], 2);
-            for (int i = 0; i < bitString.Length; i++)
-            {
-                if (bitString[i] == '0') { byteDat1[i + 4] = 0x00; }  // Decode NULL
-            }
-
-            byte[] passKeyWithNulls = new byte[4];
-            Buffer.BlockCopy(byteDat1, 4, passKeyWithNulls, 0, 4);
-            byte[] hashedPassWithNulls = new byte[20];
-            Buffer.BlockCopy(byteDat1, 8, hashedPassWithNulls, 0, 20);
-            return passKeyWithNulls;
-        }
-
-        private static bool IsPasswordCorrect(string strDPB, string password)
-        {
-            //2.4.4.1 Password Hash Data Structure
-            byte seed = Convert.ToByte(strDPB.Substring(0, 2), 16); // First two characters is HEX seed
-            byte[] decrypted_DPB = decryptDPB(strDPB);
-            int IgnoredLength = (seed & 6) / 2;
-
-            //Grbits: Each bit specifies a corresponding null byte of Key or Password Hash
-            byte[] Grbits = decrypted_DPB.Skip(1 + 2 + IgnoredLength + 4 + 1).Take(3).ToArray();
-            //Convert.ToString(Convert.ToInt64("0xffffff", 16), 2);
-            string bitString = Convert.ToString(Grbits[0] * 256 * 256 + Grbits[1] * 256 + Grbits[2], 2);
-            var KeyNoNulls_PasswordHashNoNulls = decrypted_DPB.Skip(1 + 2 + IgnoredLength + 4 + 4).Take(24).ToArray();
-            for (int i = 0; i < bitString.Length; i++)
-            {
-                if (bitString[i] == '0') { KeyNoNulls_PasswordHashNoNulls[i] = 0x00; }  // Decode NULL
-            }
-
-            var KeyWithNulls = KeyNoNulls_PasswordHashNoNulls.Take(4).ToArray();
-            var PasswordHashWithNulls = KeyNoNulls_PasswordHashNoNulls.Skip(4).Take(20).ToArray();
-
-            //PasswordHash is the 160-bit cryptographic digest of a password combined with Key as specified by Password Hash Algorithm
-            var passBytes = Encoding.GetEncoding("UTF-8").GetBytes(password).ToArray();
-            var passBytesPlusKey = passBytes.Concat(KeyWithNulls).ToArray();  // append key after password
-            byte[] passHash = SHA1CryptoServiceProvider.Create().ComputeHash(passBytesPlusKey);
-            bool ret = PasswordHashWithNulls.SequenceEqual(passHash); // Compare byte arrays
-            return ret;
-        }
-
-        private static string GenerateDBP(string password, byte seed, byte[] passKey)
-        {
-            //string password = "MVG";
-            byte[] passByte = new byte[password.Length + 4];
-            //byte[] tmp = Encoding.GetEncoding("UTF-8").GetBytes(password);
-            Buffer.BlockCopy(Encoding.GetEncoding("UTF-8").GetBytes(password), 0, passByte, 0, password.Length);
-            Buffer.BlockCopy(passKey, 0, passByte, password.Length, 4); // Add 4 bytes key after password
-            byte[] passHash = SHA1CryptoServiceProvider.Create().ComputeHash(passByte);
-            string s2 = BitConverter.ToString(passHash).Replace("-", "");
-            //string s4=(new string('1',24)).ToCharArray();
-            char[] cc = (new string('1', 24)).ToCharArray();
-            byte[] keyAndpassByte = new byte[24];
-            var passkey_plus_passHash = passKey.Concat(passHash).ToArray();
-            for (int i = 0; i < cc.Length; i++)
-            {
-                if (passkey_plus_passHash[i] == 0) { passkey_plus_passHash[i] = 0xFF; cc[i] = '0'; }
-            }
-            string s4 = new string(cc);
-            byte[] x0 = new byte[1] { 0xff };
-            byte[] xx = BitConverter.GetBytes(Convert.ToInt32(s4, 2));
-            keyAndpassByte = x0.Concat(xx.Take(3).Reverse().ToArray()).Concat(passkey_plus_passHash).Concat(new byte[1]).ToArray();  // need to reverse Grbitkey
-
-            //2.4.3.1 Encrypted Data Structure
-            // seed,
-
-            int IgnoredLength = (seed & 6) / 2;
-            byte[] header = Enumerable.Repeat((byte)0xBB, 6 + IgnoredLength).ToArray(); // 0xBB is arbitary. Ignored bytes
-            header[0] = 0x02; header[1] = 0xAC; header[IgnoredLength + 2] = 0x1d; header[IgnoredLength + 3] = 0x00; header[IgnoredLength + 4] = 0x00; header[IgnoredLength + 5] = 0x00;
-            //byte[] header = { 0x02, 0xAC, 0xFF, 0xFF, 0x1d, 0x00, 0x00, 0x00 }; // version,projkey,ignored,DataLength  [IgnoredLength = (seed & 6) / 2]
-            //byte[] DBPbeforeXOR = (new byte[] { seed }).Concat(header).Concat(keyAndpassByte).ToArray(); // first byte is arbitary seed
-            byte[] DBPbeforeXOR_without_seed = header.Concat(keyAndpassByte).ToArray();
-            string s5 = BitConverter.ToString(DBPbeforeXOR_without_seed).Replace("-", "");
-            byte[] y1 = encryptDPB(s5, seed); // y1[0]=seed
-            string str = BitConverter.ToString(y1.ToArray()).Replace("-", "");
-            return str;
-        }
-
-        private static byte[] decryptDPB(string strDPB)
-        {
-            return DecryptEncryptDPB(false, strDPB, 0x00);
-        }
-        private static byte[] encryptDPB(string strDPB, byte seed)
-        {
-            return DecryptEncryptDPB(true, strDPB, seed);
-        }
-        private static byte[] DecryptEncryptDPB(bool Enc_or_Decrypt_Flag, string strDPB, byte EncSeed)
-        {
-            // Enc_or_Decrypt_Flag==True then Encryption
-            //2.4.3.1 Encrypted Data Structure
-            //string strDPB = "94963888C84FE54FE5B01B50E59251526FE67A1CC76C84ED0DAD653FD058F324BFD9D38DED37";
-
-            // Return: [0]=Encryption seed [37]=0x00
-
-            var xx = Enumerable.Range(0, strDPB.Length / 2).Select(x => Convert.ToByte(strDPB.Substring(x * 2, 2), 16)).ToArray(); // Hex string to byte[]
-            if (Enc_or_Decrypt_Flag == true) { xx = (new byte[1] { EncSeed }).Concat(xx).ToArray(); }
-
-            List<byte> y = new List<byte>();
-
-            // xx[0]: Encryption seed
-            y.Add(xx[0]);
-            y.Add(Convert.ToByte(xx[1] ^ xx[0])); //version Must be 2
-            y.Add(Convert.ToByte(xx[2] ^ xx[0])); // project key
-
-            for (int i = 3; i < xx.Length; i++)
-            {
-                // 2.4.3 Data Encryption
-                // All operations resulting in integer overflow MUST only store low-order bits, resulting inhigh-order bit truncation
-                if (Enc_or_Decrypt_Flag == true)
-                {
-                    y.Add(Convert.ToByte(xx[i] ^ ((y[i - 2] + xx[i - 1]) & 0xFF))); // 0xFF is not to overflow
-                }
-                else
-                {
-                    y.Add(Convert.ToByte(xx[i] ^ ((xx[i - 2] + y[i - 1]) & 0xFF)));
-                }
-            }
-            return y.ToArray();
-        }
-    }
-}
-"@
-
-Add-Type -TypeDefinition $source
-$ret = [GenerateDBP.Program]::Main1($DPB, $passwd)
-Write-Host $ret
-
-exit
+[Option]
+Transparent=1
+TransBrightness=35
+TransOpt=19
+TransFile=
+Sort=169
+SusieDir=susie\
+Editor=C:\Program Files\WZ EDITOR\wzeditor.exe
+EditorCmdLine="/j$L "$P""
+DefArcExt=zip
+AutoMoveFlag=0
+SizeCalcMode=0
+StartSizeMode=1
+StartSizeX=1362
+StartSizeY=617
+StartPosMode=1
+StartPosX=196
+StartPosY=280
+StartDirMode0=0
+StartDirMode1=0
+QueryFlag=15
+QueryDestOpt=7
+NoMultiInstance=0
+IncrementalSearchShift=1
+AutoRefreshTime=0
+FileOpMode=2
+ExplorerModeDrv=0
+StatusBarFlag=1
+TitleNotDispDrv=0
+FilerOpt=5505144
+ScrollBarFlag=188
+FileDiffTime=2
+ExtWidth=4
+DispFileSize=1
+SplitterWidth=1
+ScanSusieOnStartup=1
+MigemoDict=
+LoadMigemoOnStartup=0
+IncrementalTopCharJump=0
+MigemoMinChar=3
+MouseOpt=3
+SideViewOpt=4
+ThumbnailSize=160
+ScanSusiePlugin=0
+DirHistoryMax=16
+LayeredAlpha=128
+COL_LayeredBk=0
+SavedDpi=96
+StartNoDefExec=0
+DirSizeOpt=2
+[Dir]
+COL_NORMAL=16777215
+COL_DIR=8453888
+COL_RDONLY=16777088
+COL_HIDDEN=12615935
+COL_BK=0
+COL_NOTACT=8421504
+COL_MARK=16711680
+COL_SYSTEM=255
+COL_SELECT=16777215
+ValidFlag=2
+WheelScrool=1
+MButtonFunc=0
+WheelScroll=1
+CursorWidth=2
+ProportionalFont=0
+WheelFuncShift=1
+WheelFuncCtrl=2
+WheelFuncShiftCtrl=3
+lfFaceName=ＭＳ 明朝
+lfHeight_pt=-12
+lfWeight=400
+lfItalic=0
+lfCharSet=1
+lfPitchAndFamily=17
+[Text]
+Tab=8
+Width=0
+FgColor=16777215
+BkColor=0
+SymbolColor=16776960
+Tab4Files=*.*
+DispFlag=3
+DefaultViewerMode=0
+DefaultTextCode=0
+WheelScrool=1
+WheelScroll=1
+WheelFuncShift=1
+WheelFuncCtrl=2
+WheelFuncShiftCtrl=3
+MButtonFunc=2
+ProportionalFont=0
+lfFaceName=ＭＳ 明朝
+lfHeight_pt=-14
+lfWeight=400
+lfItalic=0
+lfCharSet=0
+lfPitchAndFamily=17
+[Graph]
+BkColor=0
+Flag=27
+WheelFunc=0
+MButtonFunc=0
+ZoomDiff=10
+SlideShowInt=5
+WheelFuncShift=1
+WheelFuncCtrl=2
+WheelFuncShiftCtrl=3
+[Info]
+FgColor=8454016
+BkColor=0
+lfFaceName=MS UI Gothic
+lfHeight_pt=-12
+lfWeight=400
+lfItalic=0
+lfCharSet=128
+lfPitchAndFamily=50
+[Msg]
+FgColor=16777215
+BkColor=0
+BufferSize=1024
+Prompt=Ready
+LineCount=4
+lfFaceName=MS UI Gothic
+lfHeight_pt=-12
+lfWeight=400
+lfItalic=0
+lfCharSet=128
+lfPitchAndFamily=50
+[FTP]
+TextFile=*.html,*.htm,*.txt,*.pl
+[StartDirectory]
+0=C:\Users\Administrator\source\repos\7-zip64\
+1=E:\
+[IncrementalSearch]
+FromTop=0
+UseMigemo=0
+[CopyDestHistory]
+0=E:\Sandbox\Administrator\DefaultBox\drive\C\bsdiffrequireddlls\
+1=G:\MP4\
+2=C:\FREESOFT\動画\MediaCoder-x64 Portable\
+3=C:\FREESOFT\動画\
+4=C:\FREESOFT\動画\MediaCoder-x64-0.8.61\
+5=G:\MP4\Getter1 Downloads\韓国\
+6=E:\
+7=E:\temp\Getter1\Getter1 Downloads\韓国\
+8=C:\Documents and Settings\Administrator\Downloads\
+9=C:\FREESOFT\Others\壁紙\TWICE4\
+[Dialog]
+lfFaceName=ＭＳ 明朝
+lfHeight_pt=-14
+lfWeight=400
+lfItalic=0
+lfCharSet=128
+lfPitchAndFamily=17
+[FtpHistory]
+9.188.208.32,21,anonymous,1=
+9.188.203.32,21,,1=
+9.188.208.32,21,,1=
+9.68.196.35,21,ospwebcl,0=e67ee6cc5c2a3a90
+192.168.0.3,21,a,0=e7
+192.168.1.1,21,a,2=d8c146eb
+[KeyMap_Dir]
+561=3112
+1037=109
+102=1563
+595=11
+51=795
+85=31
+68=26
+34=5
+116=44
+99=795
+48=28
+592=138
+82=21
+65=18
+269=25
+283=552
+368=18
+96=28
+589=92
+76=26
+1062=86
+552=63
+807=99
+8=24
+90=3368
+1586=2088
+192=84
+600=3
+56=2075
+73=58
+583=139
+549=61
+294=4
+39=12
+563=1832
+376=37
+121=31
+104=2075
+546=46
+478=103
+580=12
+53=1307
+87=60
+70=33
+835=96
+36=38
+118=33
+101=1307
+220=72
+50=539
+84=67
+594=128
+67=15
+33=4
+370=16
+115=17
+98=539
+13=10
+78=40
+1064=87
+27=1
+75=20
+551=62
+296=5
+89=2344
+123=68
+446=137
+55=3624
+72=44
+582=66
+293=57
+38=2
+562=2856
+375=19
+120=26
+103=1819
+545=45
+188=119
+52=1051
+86=1320
+69=808
+579=75
+66=552
+372=134
+117=14
+100=1051
+49=283
+83=14
+32=13
+46=17
+369=36
+114=15
+97=283
+80=32
+77=16
+9=23
+74=28
+57=41
+805=98
+295=56
+40=3
+71=2600
+377=84
+122=71
+105=41
+190=136
+581=2
+54=1563
+445=22
+88=1064
+292=39
+37=11
+[KeyMap_Text]
+34=5
+116=44
+76=51
+552=63
+8=1
+73=100
+549=61
+294=4
+39=7
+121=135
+546=54
+87=70
+70=50
+36=53
+577=78
+84=69
+33=4
+557=77
+13=1
+27=1
+551=62
+296=5
+582=50
+123=68
+293=8
+38=2
+545=53
+86=59
+69=19
+579=77
+372=95
+66=52
+114=51
+9=47
+295=9
+40=3
+122=71
+292=54
+37=6
+[KeyMap_Graph]
+34=46
+82=21
+8=49
+552=63
+90=120
+549=61
+294=4
+39=7
+121=135
+36=101
+67=15
+33=45
+13=1
+27=1
+551=62
+296=5
+123=68
+293=8
+38=2
+32=48
+77=13
+9=23
+295=9
+40=3
+88=121
+122=71
+37=6
+[KeyMap_Preview]
+552=63
+549=61
+121=135
+13=1
+27=1
+551=62
+123=68
+9=23
+122=71
+[ExternalCommand]
+0=新規テキスト,0,C:\FREESOFT\EmeditorPortable\EmEditor.exe,"$N"
+14=7-Zip,0,C:\Program Files\7-Zip\7zFM.exe,"$F"
+11=WinMerge,0,C:\FREESOFT\Others\WinMergePortable\App\WinMerge\WinMergeU.exe,"$PF" "$RF"
+8=FastCopy64,0,C:\FREESOFT\dyna\FastCopy64\FastCopy.exe,/cmd=update /open_window /stream $MF /to="$OD"
+5=vlc,0,E:\Program Files\VideoLAN\vlc-3.0.16\vlc.exe,--one-instance  "$F"
+2=create symbolic link,0,cmd.exe,/k mklink "$OD" $MF
+13=powershell,0,powershell,
+10=EmEditor GREP,0,C:\FREESOFT\EmeditorPortable\EmEditor.exe,/fd "$D"
+7=FireFileCopy,60564,FireFileCopy\FFC.exe,$MF /to:"$OD"
+4=craftlaunch,60564,craft\clnch.exe,/wr /x50 /y40 /w300 /c2 ;$J
+1=WGREP,60564,C:\Program Files\WZ EDITOR\wzeditor.exe,/fGrep -f"$D"
+12=ClipName,0,C:\FREESOFT\dyna\ClipName\ClipName.exe,/A $MF
+6=コマンドプロンプト,60564,cmd.exe,
+3=EmEditor,60564,C:\FREESOFT\EmeditorPortable\EmEditor.exe,$MF
+[RegisteredDir]
+dir0=ScreenDataTransfer,C:\Columbia\Standard Poors\job\ScreenDataTransfer
+dir2=youtube-dl (Sandbox),E:\Sandbox\youtube-dlg
+dir3=administrator,C:\Documents and Settings\Administrator
+dir6=VisualStudio2022,C:\Users\Administrator\source\repos
+dir7=getter1,E:\temp\Getter1\Getter1 Downloads
+dir8=5ch_DAT,C:\FREESOFT\MY_PROGRAM\5ch_DAT
+dir9=FREESOFT,C:\FREESOFT
+dirb=4K Downloader,C:\Users\Administrator\Videos\4K Video Downloader
+dir1=Adobe Digital Edition,E:\Sandbox\Administrator\DefaultBox\user\current\Documents\My Digital Editions
+dirc=FREESOFT,C:\FREESOFT
+dir4=BillBoard Top 100,E:\Downloaded Music\BillBoard Top USA Singles
+dir5=tools,C:\TOOLS
+dira=TAPUR,C:\Users\Administrator\AppData\Roaming\Tapur\data\imashuku.afas\rec\avi
+dird=,
+dire=,
+dirf=,
+mode=1
+[FileType2]
+*.JPG=3,0,iftwic.sph,,1,0,256,0,0,24
+*.LZH=5,0,unlha32.dll,,0,0,512,0,0,
+*.MAG=3,1,IFMAG.SPI,,1,0,256,0,0,8
+*.IMZ=5,0,unzip32.dll,,0,0,512,0,0,
+*.PNG=3,0,iftwic.sph,,0,0,512,0,0,
+*.WAR=5,0,unzip32.dll,,0,0,512,0,0,
+*.WEBP=3,0,iftwic.sph,,0,0,512,0,0,
+*.ZIP=5,0,7-zip64.dll,,0,0,512,0,0,
+*.GIF=3,0,iftwic.sph,,0,0,512,0,0,
+*.EAR=5,0,unzip32.dll,,0,0,512,0,0,
+*.VCH=3,0,iftwic.sph,,0,0,512,0,0,
+*.PGM=3,0,IFPNM.SPI,,0,0,512,0,0,
+[DirHistory]
+E:\7z2408-src.7z\\C\=..
+E:\7z2408-src.7z\\CPP\=Common
+=E:\
+E:\7z2408-src.7z\\=Asm
+E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\CPP\=..
+E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\=CPP
+E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\=Src
+E:\7-zip32_ungarbled-master.zip\\=7-zip32_ungarbled-master
+C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\Bundles\7-zip32\=7-zip32.sln
+C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\Bundles\=7-zip32
+C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\=Bundles
+C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\=7zip
+C:\Users\Administrator\source\repos\7-zip64\7z2408\=CPP
+C:\Users\Administrator\source\repos\=7-zip64
+C:\Users\Administrator\source\repos\7-zip64\=7z2408
+E:\=7-zip32_ungarbled-master.zip
+[FindTextHistory]
+0=compoun
+1=stream
+2=pete
+3=hhcro
+4=skype
+5=remove
+6=rege
+7=v1/authorize
+8=7z
+9=unzip
+[FindBinaryHistory]
+0=31 00
+1=31
+2=00 31
+3=0031
+4=310004
+5=3100
+6=0119
+7=b0
+8=attr
+9=long
+[FindFileHistory]
+0=crypt
+1=crypt15
+2=crypt14
+3=shoot
+4=change
+5=csproj
+6=StdAfx.cpp
+7=sln
+8=stddef.h
+9=string.h
+[ActiveDirHistory]
+0=E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\CPP\7zip\Archive\Zip\
+1=C:\Users\Administrator\source\repos\7-zip64\Src\CPP\7zip\Bundles\7-zip32\
+2=C:\Users\Administrator\source\repos\7-zip64\
+3=C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\Bundles\
+4=E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\
+5=E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\CPP\7zip\Bundles\7-zip32\
+6=E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\C\
+7=E:\7z922002.zip\\
+8=E:\7z922002.zip\\src.7z\\
+9=C:\Users\Administrator\source\repos\7-zip64\7z2408\C\
+10=C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\Bundles\7-zip32\SFX\
+11=E:\7z2408-src.7z\\
+12=E:\
+13=E:\7-zip32_ungarbled-master.zip\\7-zip32_ungarbled-master\Src\
+14=C:\Users\Administrator\source\repos\7-zip64\7z2408\
+15=C:\Users\Administrator\source\repos\7-zip64\7z2408\CPP\7zip\Bundles\7-zip32\
