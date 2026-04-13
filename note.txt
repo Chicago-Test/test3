@@ -1,3 +1,6 @@
+https://www.reddit.com/r/1Password/comments/r5ee8x/how_random_is_random_password/
+https://www.reddit.com/r/1Password/comments/1h1et4y/character_set_for_random_password/
+
 1password scripts
 op item list --vault test_country
 op item get Israel --reveal
