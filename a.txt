@@ -1,0 +1,534 @@
+﻿class ClassTipsWatch {
+    static [string] $title;
+    # static [string]$baseURL;
+    # static ClassTipsWatch([string]$str){
+    #     [ClassTipsWatch]::baseURL=$str
+    # }
+    static [string] getTitle() {
+        return [ClassTipsWatch]::title
+    }
+    static [string] Parse_TipsWatch_HTMLfunc([string]$baseURL) {
+        [System.Reflection.Assembly]::LoadFrom("{0}\WebDriver_Selenium4.dll" -f "$PSScriptRoot\NYTimes\Selenium")
+        $ChromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+        $ChromeOptions.AddArgument('headless') #open background
+        $ChromeOptions.AcceptInsecureCertificates = $True
+        $ChromeOptions.AddUserProfilePreference("profile.default_content_setting_values.images", 2) # no images
+    
+        $ChromeDriver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($ChromeOptions)
+        $url = $baseURL
+        #$url = "https://tipswatch.com/2023/08/27/oh-no-ive-become-a-treasury-market-day-trader/"
+
+        $ChromeDriver.Url = $url
+        [ClassTipsWatch]::title = $ChromeDriver.Title
+        $xlDirectionBy = "OpenQA.Selenium.By" -as [type]
+       
+        $strBuilder = [System.Text.StringBuilder]""
+        [void]$strBuilder.Append([ClassTipsWatch]::title + "<br>----------------<br>")
+    
+        $elem = $ChromeDriver.FindElements( $xlDirectionBy::xpath("//div[@class='entry-content']"))
+        $x1 = $elem[0].GetAttribute("innerHTML")
+        [void]$strBuilder.Append($x1)
+        # Get comments
+        try {
+            $x2 = $ChromeDriver.FindElements( $xlDirectionBy::xpath("//*[@class='commentlist']/li[starts-with(@id,'li-comment-')]"))
+            foreach ($item in $x2) {
+                [void]$strBuilder.Append( $item.GetAttribute("innerHTML"))
+                #[void]$strBuilder.Append("<br>--------------------<br> >")
+                #$strBuilder.Length -= 1 # remove last ">"
+            }
+        }
+        catch {
+            break            
+        }
+    
+        $ChromeDriver.close()
+        $ChromeDriver.quit()
+
+        # Remove image, ads, etc. from HTML
+        $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+        $Parsed = $Parser.ParseDocument($strBuilder.ToString())
+        foreach ($c in $Parsed.QuerySelectorAll("img,iframe,div[id='content_btf_wrapper'],div[class*='sharedaddy']")) {
+            $c.Remove();
+        }
+
+        return $Parsed.Body.innerHtml # "$Parsed.Source.Text" does not being affected by Remove().
+    }
+}
+class ClassWSJ {
+    static [string] $title;
+    static [string] getTitle() {
+        return [ClassWSJ]::title
+    }
+    static [System.Object] FindElementByCssSelectorTryCatch([object]$driver , [string] $s) {
+        # [ref]$driver does not work
+        [System.Object]$elem = $null
+        try {
+            $xlDirectionBy = "OpenQA.Selenium.By" -as [type]
+            $elem = $driver.FindElement($xlDirectionBy::CssSelector($s))
+        }
+        catch {
+        }
+        return $elem
+    }
+    static [string] Parse_WSJ_HTMLfunc([string]$URLSource) {
+        [System.Reflection.Assembly]::LoadFrom("{0}\WebDriver_Selenium4.dll" -f "$PSScriptRoot\NYTimes\Selenium")
+        $ChromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+        #$ChromeOptions.AddArgument('user-data-dir=C:\Users\Administrator\AppData\Local\Google\Chrome\User Data') #Path to your chrome profile
+        $ChromeOptions.AddArgument('user-data-dir=E:\software\ChromeTest\User Data') #Path to your chrome profile
+        #$ChromeOptions.AddArgument('start-maximized')
+        ##$ChromeOptions.AddArgument('headless') #open background
+        $ChromeOptions.AcceptInsecureCertificates = $True
+        $ChromeOptions.AddUserProfilePreference("profile.default_content_setting_values.images", 2) # no images
+
+        $ChromeDriver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($ChromeOptions)
+        $ChromeDriver.Url = $URLSource
+        $Source = $ChromeDriver.PageSource
+        $Source = $ChromeDriver.ExecuteScript("return document.documentElement.outerHTML")
+
+        #Open message
+        [string] $Comments = "";
+
+        
+        try {
+            $buttonElem = $null
+            $buttonElem = [ClassWSJ]::FindElementByCssSelectorTryCatch($ChromeDriver, "button[class*='-CommentsButton']")
+            if ($buttonElem -eq $null) {
+                #$buttonElem = $ChromeDriver.FindElementByCssSelector("button[class='conversation-toggle conversation-hidden']")
+                $buttonElem = [ClassWSJ]::FindElementByCssSelectorTryCatch($ChromeDriver, "button[class='conversation-toggle conversation-hidden']")
+            }
+            
+            #$buttonElem = $ChromeDriver.FindElementByCssSelector("button[class*='-CommentsButton']")
+            if ($buttonElem -ne $null) {
+                #$comment_count = $ChromeDriver.FindElementByXPath("//button[contains(@class,'conversation-toggle conversation-hidden')]").FindElementsByClassName("comment-count")
+
+                ###############################################
+                # $commentID = $ChromeDriver.FindElementByXPath("//button[contains(@class,'conversation-toggle conversation-hidden')]").GetAttribute("id")
+                # $str = "document.getElementById('" + $commentID + "').click();"
+                # $ChromeDriver.ExecuteScript($str) #$buttonElem.Click() # doesn't work
+                ###############################################
+                # class is loaded before add-type. Thus "[OpenQA.Selenium.Keys]" will cause error.
+                # https://qiita.com/CheatBook/items/613557f3c79cd124a58f   https://teratail.com/questions/174707
+                $xlDirectionBy = "OpenQA.Selenium.By" -as [type]
+                $xlDirectionKeys = "OpenQA.Selenium.Keys" -as [type]
+                #$ChromeDriver.FindElementByXPath("//button[contains(@class,'-CommentsButton')]").SendKeys([OpenQA.Selenium.Keys]::Enter)
+                #$ChromeDriver.FindElementByXPath("//button[contains(@class,'-CommentsButton')]").SendKeys($xlDirectionKeys::Enter)
+                # Click "Show Comments"
+                $ChromeDriver.FindElement($xlDirectionBy::XPath("//button[contains(@class,'-CommentsButton')]")).SendKeys($xlDirectionKeys::Enter)
+                Start-Sleep -Seconds 5
+    
+                #Get shadowroot. Comments are in shadowroot.
+
+                #$xxx = $ChromeDriver.FindElement($xlDirectionBy::CssSelector('div[data-spot-im-shadow-host*="conversation-survey"]')).getShadowRoot() # Need to select right above shadowroot.
+                $xxx = $ChromeDriver.FindElement($xlDirectionBy::CssSelector('div[data-spotim-module="conversation"]'))
+                $xxx1 = $xxx.FindElement($xlDirectionBy::XPath("*")) #get all elements
+                $xxx2 = $xxx1.TagName
+                $xxx3 = $ChromeDriver.FindElement($xlDirectionBy::CssSelector($xxx2)).GetShadowRoot() # Need to select right above shadowroot.
+                $xxx = $xxx3
+
+                #Click view more button multiple times
+                try {
+                    1..4 | % { $xxx.FindElements($xlDirectionBy::CssSelector('div[class="spcv_loadMoreCommentsContainer"]')).FindElement($xlDirectionBy::CssSelector('button[aria-label="Show more comments"]')).Click(); Start-Sleep -Seconds 5 }
+                }
+                catch {
+                    ;
+                }
+                $Comments_A = $xxx.FindElements($xlDirectionBy::CssSelector('li[class="spcv_list-item"]'))
+                #$Comments_A[1].FindElements($xlDirectionBy::CssSelector('div[data-spot-im-class="message-text"]')).text
+
+                foreach ($y in $Comments_A) {
+                    $Comments += "<br>----------------<br>" + $y.FindElements($xlDirectionBy::CssSelector('div[data-spot-im-class="message-text"]')).text 
+                }
+
+                #Get comment
+                # $tmp = $ChromeDriver.FindElementByCssSelector("#conversation-container").FindElementsByClassName('conversation-content').FindElementByCssSelector("iframe").getattribute("src")
+                # $ChromeDriver.Url = $tmp
+                # Start-Sleep -Seconds 2
+                # $comment_count = $ChromeDriver.FindElementByXPath("//span[contains(@class,'talk-tab-count')]").text
+                # $Comments = $ChromeDriver.PageSource
+
+            }
+        }
+        catch {
+            ;    
+        }
+
+        $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+        $Parsed = $Parser.ParseDocument($Source)
+        $elements1 = $Parsed.GetElementsByTagName('title')
+        [ClassWSJ]::title = $elements1[0].Text
+
+        $x1 = $Parsed.GetElementsByClassName("sub-head")
+        $x1 = $x1.InnerHtml
+
+        $elem = $Parsed.QuerySelector("div[class^='article-content']")
+        if ($elem -eq $null) {
+            $elem = $Parsed.QuerySelector("section[class^='ArticleBody_']")
+            if ($elem -eq $null) {
+                $elem = $Parsed.QuerySelector("section[class*='e1d75se20']")
+            }
+        }
+
+        foreach ($c in $elem.QuerySelectorAll("img,div.ad-container,.media-object,[class*='-ad-'],[class*='media-layout']")) {
+            $c.Remove();
+        }
+
+        $x1 += $elem.InnerHtml
+
+        #Process comments
+        # if ($Comments -ne "") {
+        #     $ParsedComment = $Parser.ParseDocument($Comments)
+        #     $x4 = $ParsedComment.QuerySelectorAll("div[class='talk-plugin-rich-text-text CommentContent__content___ZGv1q']")
+        #     foreach ($y in $x4) { $x1 += "----------------" + $y.OuterHtml }
+        # }
+        $x1 += "----------------" + $Comments
+
+        $ChromeDriver.close()
+        $ChromeDriver.quit()
+        Write-Host "test..."
+        Stop-Process -name chromedriver
+
+        $x3 = [ClassWSJ]::title + "<br><br>" + $x1
+        return $x3
+    }
+}
+function Parse_DoctorOfCredit_HTMLfunc {
+    param (
+        [string]$Source
+    )
+    $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+    $Parsed = $Parser.ParseDocument($Source)
+    $elements1 = $Parsed.QuerySelector("[class='entry-title']")
+    $global:title = $elements1.TextContent
+    $x2 = $global:title + "<br>"
+
+    $elem = $Parsed.GetElementById("main")
+    #var selector = "img.clipboardData.b.c"; //tag img with class clipboardData, class b, and class c
+    foreach ($c in $elem.QuerySelectorAll("div.code-block")) {
+        # remove <img, <iframe, class including ...
+        $c.Remove();
+    }
+    $x1 = $elem.GetElementsByClassName("entry-content")
+    $x2 += $x1.OuterHtml
+
+    $x2 += "<br>Comments<br>"
+    # $x1 = $Parsed.GetElementById("wcThreadWrapper")
+    # $x1 = $x1.QuerySelectorAll("div.wc_comment_level-1")
+    $x1 = $Parsed.GetElementsByClassName("wpd-thread-list")
+    $x1 = $x1.QuerySelectorAll("div[class*='wpd_comment_level-1']")
+    foreach ($y in $x1) {
+        $x2 += "<br>===========================<br>"
+        # $x1a = $y.GetElementsByClassName("wc-comment-text")
+        $x1a = $y.GetElementsByClassName("wpd-comment-text")
+        foreach ($y1 in $x1a) {
+            $tmp = "<br>" + "-------------------" + "<br>"
+            $x2 += ($y1.TextContent + $tmp)
+        }
+        $x2 = $x2.Substring(0, $x2.Length - $tmp.Length) # remove last "---------"
+    }
+    $x2
+    return
+}
+
+function Parse_bogleheads_HTMLfunc {
+    param (
+        [string]$URLSource
+    )
+    #$ProgressPreference = 'SilentlyContinue' # No progress bar which makes Invoke-WebRequest so slow
+    #$Request = Invoke-WebRequest -Uri $URLSource
+
+    #2026/2/12 Use Selenium because Cloudflare blocks Invoke-WebRequest 
+    #https://stackoverflow.com/questions/68289474/selenium-headless-how-to-bypass-cloudflare-detection-using-selenium
+    [System.Reflection.Assembly]::LoadFrom("{0}\WebDriver_Selenium4.dll" -f "$PSScriptRoot\NYTimes\Selenium")
+    $ChromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+    #$ChromeOptions.AddArgument('headless') #open background
+    $ChromeOptions.AcceptInsecureCertificates = $True
+    $ChromeOptions.AddUserProfilePreference("profile.default_content_setting_values.images", 2) # no images
+    $ChromeDriver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($ChromeOptions)
+    $url = $URLSource
+    $ChromeDriver.Url = $url
+
+    $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+    $Parsed = $Parser.ParseDocument($ChromeDriver.PageSource) # $Parser.ParseDocument($Request.Content)
+    $elements1 = $Parsed.QuerySelector("[class='topic-title']")
+    $global:title = $elements1.TextContent
+
+    $elem = $Parsed.GetElementById("page-body")
+    #var selector = "img.clipboardData.b.c"; //tag img with class clipboardData, class b, and class c
+    foreach ($c in $elem.QuerySelectorAll("blockquote,[class='post-buttons']")) {
+        # remove <img, <iframe, class including ...
+        $c.Remove();
+    }
+
+    $ChromeDriver.close()
+    $ChromeDriver.quit()
+
+    $x1 = $elem.GetElementsByClassName("postbody")
+    foreach ($y in $x1) { $x2 += $y.OuterHtml }
+    $x2
+    return
+}
+
+function Parse_NYTimes_HTMLfunc {
+    param (
+        [string]$Source
+    )
+    $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+    $Parsed = $Parser.ParseDocument($Source)
+    $elements1 = $Parsed.GetElementsByTagName('title')
+    $global:title = $elements1[0].Text
+
+    $elem = $Parsed.QuerySelector("section[name='articleBody']")
+    
+    #var selector = "img.clipboardData.b.c"; //tag img with class clipboardData, class b, and class c
+    foreach ($c in $elem.QuerySelectorAll("img,aside")) {
+        # remove <img, <aside
+        $c.Remove();
+    }
+
+    #$x1 = $elem.GetElementsByClassName("css-1fanzo5 StoryBodyCompanionColumn")
+    $x1 = $elem.GetElementsByClassName("StoryBodyCompanionColumn")
+    #foreach (var element in $elem.QuerySelectorAll("span"))
+    foreach ($y in $x1) { $x2 += $y.OuterHtml }
+
+    $x1 = $Parsed.GetElementById("comments-speech-bubble-bottom")
+    $x2 += "<br>" + $x1.InnerHtml + "<br>"
+
+    #Get comments
+    $x1 = $Parsed.GetElementsByClassName("css-aa7djq") #("css-199z855")
+    foreach ($y in $x1) {
+        #$x2 += $y.QuerySelector("clipboardData[class='css-1dv1kvn']").OuterHtml  # $y.QuerySelector("clipboardData[class='css-1dv1kvn']").getattribute("aria-label")
+        $x2 += $y.QuerySelector("[class='css-1dv1kvn']").OuterHtml
+        $x2 += $y.QuerySelector("p[class='css-1ep7e7p']").OuterHtml
+        #Write-Host $xx
+    }
+    $x3 = $global:title + "<br><br>" + $x2
+    return $x3 #$elem.InnerHtml
+}
+function Parse_MyMoneyBlog_HTMLfunc {
+    param (
+        [string]$Source
+    )
+    $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+    $Parsed = $Parser.ParseDocument($Source)
+    $elements1 = $Parsed.QuerySelector("[class='entry-title']")
+    $global:title = $elements1.TextContent
+
+    $elem = $Parsed.GetElementById("content")
+    #var selector = "img.clipboardData.b.c"; //tag img with class clipboardData, class b, and class c
+    foreach ($c in $elem.QuerySelectorAll("img,iframe,div[id='content_btf_wrapper'],div[class*='sharedaddy']")) {
+        # remove <img, <iframe, class including ...
+        $c.Remove();
+    }
+    
+    $x1 = $elem.QuerySelector("div[class='entry-content'][data-content-ads-inserted]:not([data-content-ads-inserted=''])")
+    if ($x1 -eq $null) {
+        $x1 = $Parsed.QuerySelector(".entry-content")
+    }
+    $elemComments = $Parsed.GetElementById("comments")
+    return ($x1.OuterHtml + $elemComments.OuterHtml)
+}
+class ClassEigaCom {
+    static [string] $title;
+    # static [string]$baseURL;
+    # static ClassEigaCom([string]$str){
+    #     [ClassEigaCom]::baseURL=$str
+    # }
+    static [string] getTitle() {
+        return [ClassEigaCom]::title
+    }
+    static [string] Parse_EigaCom_comments_HTMLfunc([string]$baseURL) {
+        [System.Reflection.Assembly]::LoadFrom("{0}\WebDriver_Selenium4.dll" -f "$PSScriptRoot\NYTimes\Selenium")
+        $ChromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+        #$ChromeOptions.AddArgument('start-maximized')
+        $ChromeOptions.AddArgument('headless') #open background
+        $ChromeOptions.AcceptInsecureCertificates = $True
+        $ChromeOptions.AddUserProfilePreference("profile.default_content_setting_values.images", 2) # no images
+    
+        #https://www.nuget.org/packages/Selenium.WebDriver.ChromeDriver/94.0.4606.4101-beta
+        $ChromeDriver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($ChromeOptions)
+        
+        # https://eiga.com/movie/94694/
+        # https://eiga.com/movie/94694/review/all/1  https://eiga.com/movie/94694/review/all-rating/3/
+        $url = $baseURL + "review/all/1"
+        $ChromeDriver.Url = $url
+        [ClassEigaCom]::title = $ChromeDriver.Title
+        $xlDirectionBy = "OpenQA.Selenium.By" -as [type]
+
+        $Parser = New-Object AngleSharp.Html.Parser.HtmlParser
+
+        [int]$i = 1
+        $strBuilder = [System.Text.StringBuilder]""
+        [void]$strBuilder.Append([ClassEigaCom]::title + "<br>----------------<br>")
+
+        do {
+            $x1 = $ChromeDriver.FindElements($xlDirectionBy::xpath("//div[@class='content-main']/section/div[starts-with(@class,'user-review')]"))
+            Write-Host ([ClassEigaCom]::title) ; Write-Host "Page " $i " retrieving"; Write-Host
+            #if ($i -eq 1) {
+            #foreach ($item in $y.FindElements($xlDirectionBy::CssSelector("li[class*='sc-cBuonZ']"))) {
+            foreach ($item in $x1) {
+                #$str = $item.FindElements($xlDirectionBy::CssSelector("[class='review-title']")).FindElements($xlDirectionBy::CssSelector("[class*='rating-star']")).getAttribute("innerHTML")
+                $str = $item.FindElements($xlDirectionBy::xpath(".//*[starts-with(@class,'rating-star')]")).getAttribute("innerHTML") 
+                [void]$strBuilder.AppendLine($str)
+                #$str = $item.FindElements($xlDirectionBy::CssSelector("[class='review-data']")).FindElements($xlDirectionBy::CssSelector("[class='time']")).getAttribute("innerHTML")
+                $str = $item.FindElements($xlDirectionBy::xpath(".//*[@class='review-data']/*[@class='time']")).getAttribute("innerHTML") 
+                [void]$strBuilder.AppendLine($str)
+
+                $str = $item.FindElements($xlDirectionBy::CssSelector("div[class='txt-block']")).getAttribute("innerHTML")
+                # "続きを読む" に隠れている文章を表示させる。
+                $str = $str.replace('span class="hidden" ', 'span ').replace('>続きを読む<', '').replace('style="display: none;"', '').replace('<span>…</span>', '')
+                # Remove "ネタバレ" and "クリックして本文を読む"
+                $Parsed = $Parser.ParseDocument($str)
+                try { $Parsed.QuerySelector('div.toggle-btn > span.netabare-mark.icon.hand').Remove() }catch {}
+                try { $Parsed.QuerySelector('div.toggle-btn > span[class^="icon-after"]').Remove() }catch {}
+                $str = $Parsed.Body.innerHtml # "$Parsed.Source.Text" does not being affected by Remove().
+                [void]$strBuilder.Append($str)
+                [void]$strBuilder.Append("--------------------<br>")
+            }
+            #}
+            try {
+                # Check whether "次へ" is disabled.
+                #$n = $ChromeDriver.FindElements($xlDirectionBy::xpath("//div[@class='page-nav']/*[@class='pagination']/*/*[@class='next icon-after']")).Count
+                $xxx = $ChromeDriver.FindElements($xlDirectionBy::xpath("//div[@class='page-nav']/*[@class='pagination']/*/*[contains(text(),'次へ')]")).GetAttribute("href") # href がなければエラー. link disabled
+                $j = $i + 1; $url = $baseURL + "review/all/" + $j ; $i++;
+                if ($i -gt 10) { break } # Get max 10 links
+                $ChromeDriver.Url = $url
+            }
+            catch {
+                break            
+            }
+        }while ($True) {
+        }
+        $ChromeDriver.close()
+        $ChromeDriver.quit()
+
+        return $strBuilder.ToString();
+    }
+}
+class ClassYahoo {
+    static [string] $title;
+    # static [string]$baseURL;
+    # static ClassYahoo([string]$str){
+    #     [ClassYahoo]::baseURL=$str
+    # }
+    static [string] getTitle() {
+        return [ClassYahoo]::title
+    }
+    static [string] Parse_YahooJPcomments_HTMLfunc([string]$baseURL) {
+        [System.Reflection.Assembly]::LoadFrom("{0}\WebDriver_Selenium4.dll" -f "$PSScriptRoot\NYTimes\Selenium")
+        $ChromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+        #$ChromeOptions.AddArgument('start-maximized')
+        $ChromeOptions.AddArgument('headless') #open background
+        $ChromeOptions.AcceptInsecureCertificates = $True
+        $ChromeOptions.AddUserProfilePreference("profile.default_content_setting_values.images", 2) # no images
+    
+        #https://www.nuget.org/packages/Selenium.WebDriver.ChromeDriver/94.0.4606.4101-beta
+        $ChromeDriver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($ChromeOptions)
+        
+        if (-not $baseURL.substring($baseURL.Length - 8, 8).contains('comments') ) { $baseURL = $baseURL + '/comments' }
+        $url = $baseURL + "?&page=1&" #'https://news.yahoo.co.jp/articles/f95e62d3bbcbaefcbedeca13bce7aac7cbc8d22f/comments'
+        $ChromeDriver.Url = $url
+        [ClassYahoo]::title = $ChromeDriver.Title
+        #$elements1 = $ChromeDriver.FindElementByCssSelector("div[class='viewableWrap']")
+        $xlDirectionBy = "OpenQA.Selenium.By" -as [type]
+        ##### 2023/9/14    $elements1 = $ChromeDriver.FindElement($xlDirectionBy::CssSelector("div[class*='viewableWrap']"))
+        #$url = $elements1.GetAttribute("src")
+        #$url = $url.Replace('&comment_num=10&', '&comment_num=50&') # max 50
+    
+        #$ChromeDriver.Url = $url #$ChromeDriver.PageSource
+        #$items=$ChromeDriver.FindElementsByCssSelector("a[class='btnView expandBtn rapid-noclick-resp']")
+        
+        #    foreach ($item in $ChromeDriver.FindElementsByCssSelector("a[class*='btnView expandBtn']")) {
+        [int]$i = 1
+        $strBuilder = [System.Text.StringBuilder]"" #    [void]$strBuilder.Append($threadTitle + "<br>")
+        [void]$strBuilder.Append([ClassYahoo]::title + "<br>----------------<br>")
+        do {
+            $elem_yjnMain = $ChromeDriver.FindElements($xlDirectionBy::CssSelector("div[id='yjnMain']"))  
+            #$elem_viewableWrap = $elem_yjnMain.FindElements($xlDirectionBy::CssSelector("article")).FindElements($xlDirectionBy::CssSelector("div.viewableWrap"))
+            #$elem_viewableWrap = $elem_yjnMain.FindElements($xlDirectionBy::CssSelector("article")).FindElements($xlDirectionBy::CssSelector("div[class*='viewableWrap']"))
+            $elem_viewableWrap = $elem_yjnMain.FindElements($xlDirectionBy::CssSelector("article")) #2023/9/14
+            $elem_BothReplies = $elem_viewableWrap.FindElements($xlDirectionBy::xpath("./child::ul")) #2023/9/14
+            $elem_commenterReplies = $elem_BothReplies[0].FindElements($xlDirectionBy::xpath("./child::li"))
+            Write-Host "# of Commenters' replies: " $elem_commenterReplies.count
+            $elem_anonymousReplies = $elem_BothReplies[1].FindElements($xlDirectionBy::xpath("./child::li"))
+            Write-Host "# of Anonymous replies: " $elem_anonymousReplies.count
+
+            # First, expand "返信"
+            foreach ($item in $elem_anonymousReplies) {
+                try {
+                    # Only get 'StyledIconExpandOpen' button. Not 'StyledIconExpandClose'
+                    #$elem = $item.FindElements($xlDirectionBy::CssSelector("svg[class*='UserCommentItem__StyledIconExpandOpen']"))
+                    $elem = $item.FindElements( $xlDirectionBy::xpath("./descendant::button[contains(text(),'返信')]"))
+                    #if ( 0 -lt [int]$elem.FindElements($xlDirectionBy::xpath("./parent::button//span[contains(@class,'UserCommentItem__ReplyCount')]")).text) {
+                    if ( 0 -lt [int]$elem[0].FindElements( $xlDirectionBy::xpath("./descendant::span")).text) {
+                        # If # of reply is not zero, expand "返信"
+                        #$elem.FindElements($xlDirectionBy::xpath("./parent::button")).click()
+                        $elem[0].click()
+                    }
+                }
+                catch {
+                    Start-Sleep -s 1
+                }
+            }
+            # Next expand "...もっと見る" (Only applies to commentators' comments, which appear only in page one)
+            if ($i -eq 1) {
+                foreach ($item in $elem_commenterReplies) {
+                    try {
+                        $elem = $item.FindElements( $xlDirectionBy::xpath("//button[contains(text(),'もっと見る')]"))
+                        if ( 0 -lt [int]$elem.count) {
+                            # If "もっと見る" exists click it.
+                            $elem.click()
+                        }
+                    }
+                    catch {
+                        Start-Sleep -s 1
+                    }
+                }
+            }
+            Start-Sleep -s 3
+    
+            $y = $elem_yjnMain #$ChromeDriver.FindElement($xlDirectionBy::Id("yjnMain"))
+            # Get commentators' posts.
+            if ($i -eq 1) {
+                #foreach ($item in $y.FindElements($xlDirectionBy::CssSelector("li[class*='sc-cBuonZ']"))) {
+                foreach ($item in $elem_commenterReplies) {
+                    [void]$strBuilder.Append( $item.text)
+                    [void]$strBuilder.Append("<br>--------------------<br> >")
+                    $strBuilder.Length -= 1 # remove last ">"
+                }
+            }
+            # Get anonymous comments.
+            # Get all comments. Each $item contains one comment and all the replies.
+            #            foreach ($item in $y.FindElements($xlDirectionBy::CssSelector("li[class*='sc-iLQbDB']"))) {
+            foreach ($item in $elem_anonymousReplies) {
+                # Get all comments. Each $item contains one comment and all the replies.
+                #foreach ($item2 in $item.FindElementsByCssSelector("div[class^='ReplyCommentItem__Comment-'],p[class^='UserCommentItem__Comment']")) {
+                #foreach ($item2 in $item.FindElements($xlDirectionBy::CssSelector("[class^='ReplyCommentItem__Comment-'],[class^='UserCommentItem__Comment']"))) {
+                #foreach ($item2 in $item.FindElements($xlDirectionBy::CssSelector("div[class^='Reply__Wrapper-'],article[class*='viewableWrapper']")).FindElements( $xlDirectionBy::xpath("./descendant::p"))) {
+                foreach ($item2 in $item.FindElements( $xlDirectionBy::xpath("./descendant::p"))) {
+                    if ($item2.Text.Length -gt 0) {
+                        [void]$strBuilder.Append( $item2.text.replace("`r`n", "<br>"))
+                        [void]$strBuilder.Append("<br>--------------------<br> >")
+                    }
+                }
+                $strBuilder.Length -= 1 # remove last ">"
+            }
+            try {
+                # Check whether button is disabled.
+                #$xxx = $ChromeDriver.FindElement($xlDirectionBy::CssSelector("li[class*='pagination_item pagination_item-next']")).FindElement($xlDirectionBy::CssSelector("a")).GetAttribute("href")
+                $xxx = $ChromeDriver.FindElements( $xlDirectionBy::xpath("//a[contains(text(),'次へ')]")).GetAttribute("href") # href がなければエラー==ボタンdisabled
+                $j = $i + 1; $url = $url.Replace("&page=$i&", "&page=$j&"); $i++;
+                if ($i -gt 10) { break } # Get max 10 links
+                $ChromeDriver.Url = $url
+            }
+            catch {
+                break            
+            }
+        }while ($True) {
+        }
+    
+        $ChromeDriver.close()
+        $ChromeDriver.quit()
+
+        return $strBuilder.ToString();
+    }
+}
