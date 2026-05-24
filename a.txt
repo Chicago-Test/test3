@@ -121,8 +121,10 @@ int main(int argc, char* argv[])
 	//char* file1;
 	//char* file2;
 	char str0[] = "-d";
-	char str1[] = "E:\\temp\\LibXDiff-call\\SampleInputs\\cloc-1.84.pl";
-	char str2[] = "E:\\temp\\LibXDiff-call\\SampleInputs\\cloc-2.06.pl";
+	//char str1[] = "E:\\temp\\LibXDiff-call\\SampleInputs\\cloc-1.84.pl";
+	//char str2[] = "E:\\temp\\LibXDiff-call\\SampleInputs\\cloc-2.06.pl";
+	char str1[] = "E:\\temp\\cloc\\aa.txt";
+	char str2[] = "E:\\temp\\cloc\\bb.txt";
 	//char str1[] = "E:\\temp\\perl_VSCode\\cloc-1.64.pl";
 	//char str2[] = "E:\\temp\\perl_VSCode\\cloc-2.08.pl";
 	param1 = str0;
@@ -156,20 +158,19 @@ int main(int argc, char* argv[])
 
 	memset(&xpp, 0, sizeof(xpp));
 	xpp.flags = 0;
-	xpp.flags = (XDF_IGNORE_WHITESPACE | XDF_IGNORE_WHITESPACE_CHANGE | \
+	xpp.flags |= (XDF_IGNORE_WHITESPACE | XDF_IGNORE_WHITESPACE_CHANGE | \
 		XDF_IGNORE_WHITESPACE_AT_BOL | XDF_IGNORE_WHITESPACE_AT_EOL | \
-		XDF_IGNORE_CR_AT_EOL);
-	xpp.flags = (XDF_IGNORE_BLANK_LINES);
+		XDF_IGNORE_CR_AT_EOL | XDF_IGNORE_BLANK_LINES);
 
 	if (!_stricmp(param1, "-p")) {
 		//printf("patience");
-		xpp.flags = XDF_PATIENCE_DIFF;
+		xpp.flags |= XDF_PATIENCE_DIFF;
 	}
 	else if (!_stricmp(param1, "-h")) {
-		xpp.flags = XDF_HISTOGRAM_DIFF;
+		xpp.flags |= XDF_HISTOGRAM_DIFF;
 	}
 	else if (!_stricmp(param1, "-m")) {
-		xpp.flags = XDF_NEED_MINIMAL;
+		xpp.flags |= XDF_NEED_MINIMAL;
 	}
 
 	//if (diff_flags & DIFF_IWHITE) xpp.flags |= XDF_IGNORE_WHITESPACE;
