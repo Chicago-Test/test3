@@ -6,7 +6,7 @@ cd $PSScriptRoot
 
 Remove-Variable * -ErrorAction SilentlyContinue
 
-$CREATE_DUMMY_FILES = $false
+$CREATE_DUMMY_FILES = $true
 $path1 = "E:\temp\LibXDiff-call\powershell\1\"
 $path2 = "E:\temp\LibXDiff-call\powershell\2"
 
@@ -43,7 +43,8 @@ if ($CREATE_DUMMY_FILES -eq $true) {
     if ($strBuilder.Length -gt 0) {
         $lines = $strBuilder.ToString() -split "`n"
         foreach ($c in $lines) {
-            if ($c.Length -gt 0) { $x = (New-Item -ItemType File -Path $c.Trim()); $i++; }
+            # -Force will create necessary directory if needed.
+            if ($c.Length -gt 0) { $x = (New-Item -ItemType File -Path $c.Trim() -Force); $i++; }
         }
     }
     Write-Host "Created " $i "dummy files"
