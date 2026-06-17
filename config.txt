@@ -1,0 +1,9 @@
+
+# rem
+bas,vb_dotnet
+frm,vb_dotnet
+vb,vb_dotnet
+  #r,r
+sql,sql
+#c,c
+h,c
